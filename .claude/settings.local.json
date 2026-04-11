@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd D:Projects for myCollega projectai-repurposer)",
+      "Bash(pip install:*)",
+      "Bash(ffmpeg -version)"
+    ]
+  }
+}
