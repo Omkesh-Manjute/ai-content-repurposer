@@ -31,7 +31,6 @@ function parseAIResponse(raw: string) {
     captions: "", 
     keywords: "" 
   };
-  
   const lines = raw.split("\n");
   let currentKey: keyof typeof sections | null = null;
 
@@ -55,7 +54,6 @@ function parseAIResponse(raw: string) {
     } else if (/KEYWORDS|TAGS|कीवर्ड/i.test(upper) && (trimmed.includes("🔑") || trimmed.includes("7."))) {
       currentKey = "keywords"; continue;
     }
-    
     if (currentKey) sections[currentKey] += line + "\n";
   }
 
@@ -72,9 +70,9 @@ function parseAIResponse(raw: string) {
     summary: sections.summary.trim(),
     notes: sections.notes.trim(),
     reelScripts: reelScripts.length ? reelScripts : [{ hook: "Catchy Hook", content: sections.reels.trim(), cta: "Follow for more" }],
-    viralHooks: sections.hooks.trim().split("\n").filter(l => l.length > 5 && (l.includes("-") || l.match(/^\d/))),
-    titles: sections.titles.trim().split("\n").filter(l => l.length > 5),
-    captions: sections.captions.trim().split("\n\n").filter(l => l.length > 10),
+    viralHooks: sections.hooks.trim().split("\n").filter(l => l.length > 5).slice(0, 10),
+    titles: sections.titles.trim().split("\n").filter(l => l.length > 5).slice(0, 5),
+    captions: sections.captions.trim().split("\n\n").filter(l => l.length > 10).slice(0, 3),
     keywords: sections.keywords.trim(),
   };
 }
@@ -100,46 +98,27 @@ OUTPUT FORMAT:
 
 3. 🎯 REELS / SHORTS SCRIPT (3 versions)
 Each version MUST include:
-- VERSION: [1, 2, or 3]
+- VERSION: [number]
 - Hook: (catchy first 2-3 seconds)
-- Main: (fast, engaging content body)
-- Ending: (CTA like follow/subscribe)
+- Main: (engaging content body)
+- Ending: (CTA follow/subscribe)
 
 4. 🔥 VIRAL HOOKS (10)
-- Attention-grabbing lines
-- Curiosity-driven
-
 5. 🏷️ TITLES (5)
-- YouTube/Shorts optimized
-- Clickbait but relevant
-
 6. 📢 CAPTIONS (3)
-- Social media captions with emojis
-- Include CTA
-
 7. 🔑 KEYWORDS / TAGS
-- SEO-friendly keywords
 
-STYLE:
-- Hinglish tone (mix of Hindi and English)
-- Simple language
-- High engagement
-- No fluff
-- Do not mention "transcript"
-- Make content look original and creator-ready.`;
+STYLE: Hinglish, Simple, High engagement, No fluff. Do not mention "transcript".`;
 }
 
 async function callOpenAICompat(apiKey: string, model: string, prompt: string, baseUrl: string): Promise<string> {
   const res = await fetch(`${baseUrl}/chat/completions`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({ 
-      model, 
-      messages: [{ role: "system", content: "You are a viral content creator." }, { role: "user", content: prompt }] 
-    }),
+    body: JSON.stringify({ model, messages: [{ role: "system", content: "You are a content creator." }, { role: "user", content: prompt }] }),
   });
   const data = await res.json() as any;
-  if (data.error) throw new Error(data.error.message || "AI Provider Error");
+  if (data.error) throw new Error(data.error.message);
   return data.choices?.[0]?.message?.content || "";
 }
 
@@ -156,50 +135,52 @@ async function generateWithProvider(providerId: ProviderId, apiKey: string, mode
 // ─── Main Route Handler ───────────────────────────────
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    const { url, apiKey, provider = "openai", model = "gpt-4o", tone = "Hinglish", useAI = true } = body;
-    
+    const { url, apiKey, provider = "openai", model = "gpt-4o", tone = "Hinglish", useAI = true } = await req.json();
     const videoId = extractVideoId(url?.trim());
     if (!videoId) return NextResponse.json({ error: "Invalid YouTube URL" }, { status: 400 });
 
     async function tryFetchTranscript(vId: string): Promise<TranscriptItem[] | null> {
+      // Strategy 1: youtube-transcript
       try {
         const res = await YoutubeTranscript.fetchTranscript(vId);
-        if (res?.length) return res.map(i => ({ text: i.text, offset: i.offset }));
+        if (res?.length) return res;
       } catch {}
 
+      // Strategy 2: Manual HTML Scrape (Universal)
       try {
-        const androidRes = await fetch("https://www.youtube.com/youtubei/v1/player", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "User-Agent": "com.google.android.youtube/19.29.1" },
-          body: JSON.stringify({
-            context: { client: { clientName: "ANDROID", clientVersion: "19.29.1" } },
-            videoId: vId
-          })
+        const pageRes = await fetch(`https://www.youtube.com/watch?v=${vId}`, {
+          headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" }
         });
-        const player = await androidRes.json() as any;
-        const tracks = player.captions?.playerCaptionsTracklistRenderer?.captionTracks;
-        if (tracks?.length) {
-          const track = tracks.find((t: any) => t.languageCode === 'en') || tracks[0];
-          const transcriptJson = await (await fetch(track.baseUrl + "&fmt=json3")).json() as any;
-          return transcriptJson.events
-            ?.filter((e: any) => e.segs)
-            .map((e: any) => ({
+        const html = await pageRes.text();
+        const captionsMatch = html.match(/"captionTracks":\s*(\[.*?\])/);
+        if (captionsMatch) {
+          const tracks = JSON.parse(captionsMatch[1]);
+          const track = tracks.find((t: any) => t.languageCode === "en") || tracks[0];
+          if (track?.baseUrl) {
+            const transcriptRaw = await (await fetch(track.baseUrl + "&fmt=json3")).json();
+            return transcriptRaw.events?.filter((e: any) => e.segs).map((e: any) => ({
               text: e.segs.map((s: any) => s.utf8).join(""),
               offset: e.tStartMs
             }));
+          }
         }
       } catch {}
 
-      const pipedInstances = ["https://pipedapi.kavin.rocks", "https://api.piped.asia"];
+      // Strategy 3: Piped API (Global fallback)
+      const pipedInstances = [
+        "https://pipedapi.kavin.rocks",
+        "https://api.piped.asia",
+        "https://piped-api.garudalinux.org",
+        "https://pipedapi.colbybros.online"
+      ];
       for (const instance of pipedInstances) {
         try {
           const res = await fetch(`${instance}/streams/${vId}`);
-          const streamData = await res.json() as any;
-          const subtitle = streamData.subtitles?.find((s: any) => s.code.startsWith("en")) || streamData.subtitles?.[0];
-          if (subtitle?.url) {
-            const vttText = await (await fetch(subtitle.url)).text();
-            return vttText.split("\n\n").slice(1).map(block => ({ text: block.split("\n").slice(1).join(" "), offset: 0 })).filter(i => i.text.length > 2);
+          const data = await res.json() as any;
+          const track = data.subtitles?.find((s: any) => s.code.startsWith("en")) || data.subtitles?.[0];
+          if (track?.url) {
+            const vtt = await (await fetch(track.url)).text();
+            return vtt.split("\n\n").slice(1).map(block => ({ text: block.split("\n").slice(1).join(" "), offset: 0 })).filter(i => i.text.length > 2);
           }
         } catch {}
       }
@@ -207,15 +188,13 @@ export async function POST(req: NextRequest) {
     }
 
     const items = await tryFetchTranscript(videoId);
-    if (!items?.length) return NextResponse.json({ error: "Transcript blocked or unavailable" }, { status: 422 });
+    if (!items?.length) return NextResponse.json({ error: "Could not extract transcript. YouTube is blocking the request." }, { status: 422 });
 
     const fullTranscript = items.map((i: TranscriptItem) => i.text).join(" ").replace(/\s+/g, " ");
 
-    if (!useAI || !apiKey) {
-      return NextResponse.json({ transcript: fullTranscript, videoId });
-    }
+    if (!useAI || !apiKey) return NextResponse.json({ transcript: fullTranscript, videoId });
 
-    const prompt = buildPrompt(fullTranscript.slice(0, 10000), tone);
+    const prompt = buildPrompt(fullTranscript.slice(0, 12000), tone);
     const rawAiResponse = await generateWithProvider(provider as ProviderId, apiKey, model, prompt);
     const parsed = parseAIResponse(rawAiResponse);
 
