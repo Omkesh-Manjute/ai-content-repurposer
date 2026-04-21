@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { YoutubeTranscript } from "youtube-transcript";
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { getProvider } from "@/lib/providers";
 import type { ProviderId } from "@/lib/providers";
 
 // ─── Helpers ──────────────────────────────────────────
@@ -22,7 +21,7 @@ function parseAIResponse(raw: string) {
   const lines = raw.split("\n");
   let currentKey: keyof typeof sections | null = null;
 
-  for (let line of lines) {
+  for (const line of lines) {
     const trimmed = line.trim();
     if (!trimmed) continue;
     const upper = trimmed.toUpperCase();
@@ -98,52 +97,76 @@ export async function POST(req: NextRequest) {
     console.log("Processing:", videoId);
 
     async function tryFetchTranscript(vId: string) {
-      // 1. Package Fallback
+      // 1. YouTube Transcript Package (Standard)
       try {
         const res = await YoutubeTranscript.fetchTranscript(vId);
         if (res?.length) return res;
       } catch {}
 
-      // 2. Manual Mobile Fetch (Native Node)
+      // 2. InnerTube API - Android Client (Highly Resilient)
       try {
-        const res = await fetch("https://www.youtube.com/youtubei/v1/player", {
+        const androidRes = await fetch("https://www.youtube.com/youtubei/v1/player", {
           method: "POST",
-          headers: { "Content-Type": "application/json", "User-Agent": "com.google.ios.youtube/19.29.1 (iPhone16,2; iOS 17_5_1)" },
-          body: JSON.stringify({ context: { client: { clientName: "IOS", clientVersion: "19.29.1" } }, videoId: vId })
+          headers: { "Content-Type": "application/json", "User-Agent": "com.google.android.youtube/19.29.1 (iPhone16,2; iOS 17_5_1)" },
+          body: JSON.stringify({
+            context: { client: { clientName: "ANDROID", clientVersion: "19.29.1" } },
+            videoId: vId
+          })
         });
-        const data = await res.json();
-        const trackUrl = data?.captions?.playerCaptionsTracklistRenderer?.captionTracks?.[0]?.baseUrl;
-        if (trackUrl) {
-          const tRes = await (await fetch(trackUrl + "&fmt=json3")).json();
-          return tRes.events?.filter((e: any) => e.segs).map((e: any) => ({ text: e.segs.map((s: any) => s.utf8).join(""), offset: e.tStartMs }));
+        const player = await androidRes.json();
+        const tracks = player.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+        if (tracks && tracks.length > 0) {
+          const track = tracks.find((t: any) => t.languageCode === 'en') || tracks[0];
+          const transcriptJson = await (await fetch(track.baseUrl + "&fmt=json3")).json();
+          return transcriptJson.events
+            ?.filter((e: any) => e.segs)
+            .map((e: any) => ({
+              text: e.segs.map((s: any) => s.utf8).join(""),
+              offset: e.tStartMs
+            }));
         }
       } catch {}
 
-      // 3. Piped APIs
-      for (const api of ["https://pipedapi.kavin.rocks", "https://api.piped.asia"]) {
+      // 3. Piped APIs Fallback (Global Proxies)
+      const pipedInstances = [
+        "https://pipedapi.kavin.rocks",
+        "https://api.piped.asia",
+        "https://piped-api.garudalinux.org",
+        "https://pipedapi.colbybros.online"
+      ];
+
+      for (const instance of pipedInstances) {
         try {
-          const data = await (await fetch(`${api}/streams/${vId}`)).json();
-          const track = data.subtitles?.find((s: any) => s.code.startsWith("en"));
-          if (track?.url) {
-            const text = await (await fetch(track.url)).text();
-            return text.split("\n\n").slice(1).map(b => ({ text: b.split("\n").slice(1).join(" "), offset: 0 }));
+          const res = await fetch(`${instance}/streams/${vId}`, { next: { revalidate: 60 } });
+          const streamData = await res.json();
+          const subtitle = streamData.subtitles?.find((s: any) => s.code.startsWith("en")) || streamData.subtitles?.[0];
+          if (subtitle?.url) {
+            const vttText = await (await fetch(subtitle.url)).text();
+            return vttText.split("\n\n")
+              .slice(1)
+              .map(block => {
+                const parts = block.split("\n");
+                return { text: parts.slice(1).join(" "), offset: 0 };
+              })
+              .filter(i => i.text.length > 2);
           }
         } catch {}
       }
+
       return null;
     }
 
     const items = await tryFetchTranscript(videoId);
-    if (!items?.length) return NextResponse.json({ error: "Transcript blocked or unavailable" }, { status: 422 });
+    if (!items || items.length === 0) {
+      return NextResponse.json({ error: "Could not extract transcript. YouTube is blocking the request or the video has no captions." }, { status: 422 });
+    }
 
     const fullTranscript = items.map(i => i.text).join(" ").replace(/\s+/g, " ");
 
-    // Standard Response if useAI is false
     if (!useAI || !apiKey) {
       return NextResponse.json({ transcript: fullTranscript, videoId });
     }
 
-    // AI Processing
     const prompt = buildPrompt(fullTranscript.slice(0, 10000), tone);
     const rawAiResponse = await generateWithProvider(provider as ProviderId, apiKey, model, prompt);
     const parsed = parseAIResponse(rawAiResponse);
@@ -151,6 +174,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ...parsed, videoId });
 
   } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    return NextResponse.json({ error: err.message || "Internal server error" }, { status: 500 });
   }
 }
