@@ -328,49 +328,92 @@ export async function POST(req: NextRequest) {
     const providerConfig = getProvider(provider as ProviderId);
     const resolvedModel = model || providerConfig.models[0].id;
 
-    // Step 1: Fetch transcript using Python (most reliable)
+    // Step 1: Fetch transcript using multiple strategies
     let transcript = "";
     let rawItems: any[] = [];
     
     console.log("Starting transcript extraction for video:", videoId);
 
-    // METHOD: Node.js youtube-transcript package
-    try {
-      const result = await Promise.race([
-        YoutubeTranscript.fetchTranscript(videoId),
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Timeout")), 10000))
-      ]);
-      if (result && result.length > 0) {
-        rawItems = result;
-        console.log("Node.js youtube-transcript succeeded!");
+    async function tryFetchTranscript(vId: string) {
+      // Strategy 1: youtube-transcript package with a slightly different approach
+      try {
+        console.log("Attempting Strategy 1: youtube-transcript...");
+        const result = await Promise.race([
+          YoutubeTranscript.fetchTranscript(vId),
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Timeout")), 8000))
+        ]);
+        if (result && result.length > 0) return result;
+      } catch (e) {
+        console.warn("Strategy 1 failed:", e instanceof Error ? e.message : e);
       }
-    } catch (e) {
-      console.warn("Node.js youtube-transcript failed:", e);
+
+      // Strategy 2: Manual fetch with different Client ID if Strategy 1 fails
+      // We attempt to fetch via the mobile player parameters which are often less restricted
+      try {
+        console.log("Attempting Strategy 2: Manual InnerTube Fetch...");
+        const response = await fetch("https://www.youtube.com/youtubei/v1/player?prettyPrint=false", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (Android 14; Mobile; rv:128.0) Gecko/128.0 Firefox/128.0"
+          },
+          body: JSON.stringify({
+            context: {
+              client: { clientName: "ANDROID", clientVersion: "19.30.36" }
+            },
+            videoId: vId
+          })
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          const tracks = data?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+          if (tracks && tracks.length > 0) {
+            const trackUrl = tracks[0].baseUrl;
+            const transcriptRes = await fetch(trackUrl + "&fmt=json3");
+            const transcriptData = await transcriptRes.json();
+            if (transcriptData?.events) {
+              return transcriptData.events
+                .filter((e: any) => e.segs)
+                .map((e: any) => ({
+                  text: e.segs.map((s: any) => s.utf8).join(" "),
+                  offset: e.tStartMs,
+                  duration: e.dDurationMs
+                }));
+            }
+          }
+        }
+      } catch (e) {
+        console.warn("Strategy 2 failed:", e instanceof Error ? e.message : e);
+      }
+
+      return null;
+    }
+
+    const fetchedItems = await tryFetchTranscript(videoId);
+    if (fetchedItems && fetchedItems.length > 0) {
+      rawItems = fetchedItems;
+      console.log(`Successfully fetched ${rawItems.length} transcript items.`);
     }
 
     if (rawItems && rawItems.length > 0) {
       // Format with timestamps: [00:15] text...
       transcript = rawItems.map((i) => {
-        const mins = Math.floor((i.offset || 0) / 1000 / 60);
-        const secs = Math.floor(((i.offset || 0) / 1000) % 60);
+        const offset = i.offset || i.start * 1000 || 0;
+        const mins = Math.floor(offset / 1000 / 60);
+        const secs = Math.floor((offset / 1000) % 60);
         const timeStr = `[${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}]`;
         return `${timeStr} ${i.text}`;
       }).join(" ").replace(/\s+/g, " ").trim();
     }
 
-    if (!transcript) {
+    if (!transcript || transcript.length < 50) {
+      console.error("Transcript extraction failed completely.");
       return NextResponse.json(
         { 
-          error: "Could not extract transcript. YouTube may be temporarily blocking requests. Please wait 1-2 minutes and try again, or try a different video.",
-          details: "This can happen if: (1) The video has no captions/CC, (2) The video is private/restricted, (3) YouTube is rate-limiting requests from your network. Waiting a minute usually fixes it."
+          error: "Could not extract transcript. YouTube is blocking the request or the video has no captions.",
+          details: "YouTube occasionally blocks automated requests. Try these steps:\n1. Wait 2-3 minutes and try again.\n2. Ensure the video actually has CC/Subtitles available.\n3. Try a different video to see if it's a specific block."
         },
-        { status: 422 }
-      );
-    }
-
-    if (!transcript || transcript.length < 50) {
-      return NextResponse.json(
-        { error: "Transcript too short or empty. Try a different video." },
         { status: 422 }
       );
     }
