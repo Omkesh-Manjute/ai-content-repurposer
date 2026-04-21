@@ -34,7 +34,7 @@ export type GeneratedContent = {
 export type AppState = "idle" | "processing" | "done" | "error";
 
 export default function HomePage() {
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [isLoggedIn, setIsLoggedIn] = useState(true);
   const [appState, setAppState] = useState<AppState>("idle");
   const [content, setContent] = useState<GeneratedContent | null>(null);
   const [errorMessage, setErrorMessage] = useState("");

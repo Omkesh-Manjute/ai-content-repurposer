@@ -296,8 +296,8 @@ export default function InputSection({ onGenerate, errorMessage, isError }: Inpu
   const [apiKey, setApiKey] = useState("");
   const [showKey, setShowKey] = useState(false);
   const [urlError, setUrlError] = useState("");
-  const [providerId, setProviderId] = useState<ProviderId>("gemini");
-  const [modelId, setModelId] = useState("gemini-2.0-flash");
+  const [providerId, setProviderId] = useState<ProviderId>("openrouter");
+  const [modelId, setModelId] = useState("openrouter/auto");
   const [rememberKey, setRememberKey] = useState(false);
   const [savedKeys, setSavedKeys] = useState<Record<string, string>>({});
   const [toneId, setToneId] = useState("engaging");
@@ -310,8 +310,8 @@ export default function InputSection({ onGenerate, errorMessage, isError }: Inpu
     const keys = loadSavedKeys();
     setRememberKey(remember);
     setSavedKeys(keys);
-    if (remember && keys["gemini"]) {
-      setApiKey(keys["gemini"]);
+    if (remember && keys["openrouter"]) {
+      setApiKey(keys["openrouter"]);
     }
   }, []);
 
