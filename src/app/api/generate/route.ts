@@ -63,66 +63,124 @@ function parseAIResponse(raw: string) {
 }
 
 async function tryFetchTranscript(vId: string): Promise<TranscriptItem[] | null> {
-  // Strategy 1: Mobile Client Emulation (High Success Rate)
-  // This bypasses bot detection by mimicking an Android device
+  // Strategy 1: YouTubei (Innertube) API - Android Client
+  // This is what mobile apps use and is very hard for YouTube to block entirely
   try {
-    const res = await fetch(`https://www.youtube.com/watch?v=${vId}`, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Mobile Safari/537.36",
-        "Accept-Language": "en-US,en;q=0.9,hi;q=0.8",
-        "Cache-Control": "no-cache"
-      }
+    const res = await fetch("https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2Sl_Y6G397J8u5kY37rJ3S5c6G8", {
+      method: "POST",
+      body: JSON.stringify({
+        videoId: vId,
+        context: {
+          client: {
+            clientName: "ANDROID",
+            clientVersion: "17.31.35",
+            hl: "en",
+            gl: "US",
+            utcOffsetMinutes: 0
+          }
+        }
+      }),
+      headers: { "Content-Type": "application/json" }
     });
-    const html = await res.text();
-    const cleanHtml = html.split('ytInitialPlayerResponse = ')[1]?.split(';</script>')[0];
-    if (cleanHtml) {
-      const playerResponse = JSON.parse(cleanHtml);
-      const tracks = playerResponse.captions?.playerCaptionsTracklistRenderer?.captionTracks;
-      if (tracks?.length) {
-        // Prioritize English (Auto-generated or Manual), then Hindi
-        const track = tracks.find((t: any) => t.languageCode === "en") || 
-                      tracks.find((t: any) => t.languageCode === "hi") || 
-                      tracks[0];
-        
-        const data = await (await fetch(track.baseUrl + "&fmt=json3")).json();
-        return data.events?.filter((e: any) => e.segs).map((e: any) => ({
-          text: e.segs.map((s: any) => s.utf8).join(""),
-          offset: e.tStartMs
-        }));
-      }
+    const data = await res.json();
+    const tracks = data.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+    if (tracks?.length) {
+      const track = tracks.find((t: any) => t.languageCode === "en") || tracks[0];
+      const captionRes = await fetch(track.baseUrl + "&fmt=json3");
+      const captionData = await captionRes.json();
+      return captionData.events?.filter((e: any) => e.segs).map((e: any) => ({
+        text: e.segs.map((s: any) => s.utf8).join(""),
+        offset: e.tStartMs
+      }));
     }
   } catch (e) {
-    console.log("Strategy 1 (Mobile) failed, trying fallbacks...");
+    console.log("Innertube Android failed");
   }
 
-  // Strategy 2: youtube-transcript library
+  // Strategy 2: Innertube API - Web Client
+  try {
+    const res = await fetch("https://www.youtube.com/youtubei/v1/player", {
+      method: "POST",
+      body: JSON.stringify({
+        videoId: vId,
+        context: {
+          client: {
+            clientName: "WEB",
+            clientVersion: "2.20240210.01.00",
+            hl: "en"
+          }
+        }
+      }),
+      headers: { "Content-Type": "application/json" }
+    });
+    const data = await res.json();
+    const tracks = data.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+    if (tracks?.length) {
+      const track = tracks.find((t: any) => t.languageCode === "en") || tracks[0];
+      const captionData = await (await fetch(track.baseUrl + "&fmt=json3")).json();
+      return captionData.events?.filter((e: any) => e.segs).map((e: any) => ({
+        text: e.segs.map((s: any) => s.utf8).join(""),
+        offset: e.tStartMs
+      }));
+    }
+  } catch (e) {
+    console.log("Innertube Web failed");
+  }
+
+  // Strategy 3: Invidious API (Improved Rotator)
+  const instances = [
+    "https://inv.tux.rs",
+    "https://yewtu.be",
+    "https://invidious.snopyta.org",
+    "https://invidious.kavin.rocks",
+    "https://vid.puffyan.us",
+    "https://invidious.namazso.eu"
+  ];
+  
+  // Shuffle instances
+  const shuffled = instances.sort(() => Math.random() - 0.5);
+
+  for (const inst of shuffled) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 4000); // 4s timeout
+      
+      const response = await fetch(`${inst}/api/v1/videos/${vId}?fields=captions`, { 
+        signal: controller.signal,
+        headers: { "User-Agent": "Mozilla/5.0" }
+      });
+      clearTimeout(timeoutId);
+      
+      if (!response.ok) continue;
+      
+      const data = await response.json();
+      const cap = data.captions?.find((c: any) => c.languageCode === "en") || 
+                  data.captions?.find((c: any) => c.label.includes("English")) || 
+                  data.captions?.[0];
+                  
+      if (cap?.url) {
+        const vttRes = await fetch(`${inst}${cap.url}`);
+        const vtt = await vttRes.text();
+        return vtt.split("\n\n")
+          .filter(block => block.includes("-->"))
+          .map(block => ({
+            text: block.split("\n").slice(1).join(" ").replace(/<[^>]*>/g, "").trim(),
+            offset: 0
+          })).filter(item => item.text.length > 0);
+      }
+    } catch (e) {
+      console.log(`Invidious instance ${inst} failed`);
+    }
+  }
+
+  // Strategy 4: Final Fallback - youtube-transcript library
   try {
     const res = await YoutubeTranscript.fetchTranscript(vId);
     if (res?.length) return res;
-  } catch {}
-
-  // Strategy 3: Invidious API (External Instances)
-  const insts = ["https://yewtu.be", "https://inv.tux.rs", "https://invidious.snopyta.org"];
-  for (const inst of insts) {
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3000); // 3s timeout per instance
-      
-      const response = await fetch(`${inst}/api/v1/videos/${vId}?fields=captions`, { signal: controller.signal });
-      clearTimeout(timeoutId);
-      
-      const data = await response.json();
-      const cap = data.captions?.find((c: any) => c.label.includes("English")) || data.captions?.[0];
-      if (cap?.url) {
-        const vtt = await (await fetch(`${inst}${cap.url}`)).text();
-        // Basic VTT parser
-        return vtt.split("\n\n").slice(1).map(b => ({ 
-          text: b.split("\n").slice(1).join(" ").replace(/<[^>]*>/g, ""), 
-          offset: 0 
-        }));
-      }
-    } catch {}
+  } catch (e) {
+    console.log("All strategies failed");
   }
+
   return null;
 }
 
