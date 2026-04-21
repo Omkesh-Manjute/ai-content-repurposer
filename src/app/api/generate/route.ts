@@ -3,10 +3,6 @@ import { YoutubeTranscript } from "youtube-transcript";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { getProvider } from "@/lib/providers";
 import type { ProviderId } from "@/lib/providers";
-import { execSync } from "child_process";
-import path from "path";
-import fs from "fs";
-
 
 // ─── Helpers ──────────────────────────────────────────
 function extractVideoId(url: string): string | null {
@@ -22,533 +18,139 @@ function extractVideoId(url: string): string | null {
 }
 
 function parseAIResponse(raw: string) {
-  console.log("--- RAW AI RESPONSE START ---");
-  console.log(raw);
-  console.log("--- RAW AI RESPONSE END ---");
-
-  const sections: Record<string, string> = {
-    notes: "",
-    captions: "",
-    reel: "",
-    highlights: ""
-  };
-
-  const lines = raw.split('\n');
+  const sections: Record<string, string> = { notes: "", captions: "", reel: "", highlights: "" };
+  const lines = raw.split("\n");
   let currentKey: keyof typeof sections | null = null;
 
   for (let line of lines) {
     const trimmed = line.trim();
     if (!trimmed) continue;
-
     const upper = trimmed.toUpperCase();
-    
-    // Check for section transitions (Robust Multi-language & number prefix detection)
-    if (/^(?:\d+[\.\)]\s*)?[#*\-\s\[]*?(?:SMART\s*)?(?:NOTES?|SUMMARY|OVERVIEW|नोट)[*#\s\]:]*$/i.test(trimmed) || /^(?:\d+[\.\)]\s*)?[#*\-\s\[]*?(?:SMART\s*)?(?:NOTES?|SUMMARY|OVERVIEW|नोट)[:\s\-]+(?!\s)/i.test(trimmed)) {
-      currentKey = "notes";
-      continue;
-    } else if (/^(?:\d+[\.\)]\s*)?[#*\-\s\[]*?(?:CAPTIONS?|SOCIAL|POSTS|कैप्शन)[*#\s\]:]*$/i.test(trimmed) || /^(?:\d+[\.\)]\s*)?[#*\-\s\[]*?(?:CAPTIONS?|SOCIAL|POSTS|कैप्शन)[:\s\-]+(?!\s)/i.test(trimmed)) {
-      currentKey = "captions";
-      continue;
-    } else if (/^(?:\d+[\.\)]\s*)?[#*\-\s\[]*?(?:REEL\s*SCRIPT|शीर्षक|Smar)[*#\s\]:]*$/i.test(trimmed) || /REEL\s*SCRIPT/i.test(upper)) {
-      currentKey = "reel";
-      continue;
-    } else if (/^(?:\d+[\.\)]\s*)?[#*\-\s\[]*?(?:HIGHLIGHTS?|CLIPS|मुख्य|वीडियो)[*#\s\]:]*$/i.test(trimmed) || /HIGHLIGHTS|CLIPS/i.test(upper)) {
-      currentKey = "highlights";
-      continue;
-    }
 
-    if (currentKey) {
-      sections[currentKey] += line + "\n";
+    if (/^(?:\d+[\.\)]\s*)?[#*\-\s\[]*?(?:SMART\s*)?(?:NOTES?|SUMMARY|नोट)/i.test(trimmed)) {
+      currentKey = "notes"; continue;
+    } else if (/^(?:\d+[\.\)]\s*)?[#*\-\s\[]*?(?:CAPTIONS?|SOCIAL|POSTS|कैप्शन)/i.test(trimmed)) {
+      currentKey = "captions"; continue;
+    } else if (/REEL\s*SCRIPT|शीर्षक/i.test(upper)) {
+      currentKey = "reel"; continue;
+    } else if (/HIGHLIGHTS|CLIPS|मुख्य|वीडियो/i.test(upper)) {
+      currentKey = "highlights"; continue;
     }
+    if (currentKey) sections[currentKey] += line + "\n";
   }
 
-  // Fallback: If no markers were found at all, try to find them using regex on the whole block
-  if (!sections.notes && !sections.captions && !sections.reel) {
-    const headerPrefix = `(?:^|\\n)(?:\\s*\\d+[\\.\\)]\\s*)?[#*\\s]*`;
-    
-    const notesMatch = raw.match(new RegExp(`${headerPrefix}(?:SMART\\s*)?NOTES?[*#\\s:]*\\s*([\\s\\S]*?)(?=${headerPrefix}(?:CAPTIONS?|REEL\\s*SCRIPT|HIGHLIGHTS?)[*#\\s:]*|$)`, 'i'));
-    if (notesMatch) sections.notes = notesMatch[1];
-    
-    const captionsMatch = raw.match(new RegExp(`${headerPrefix}CAPTIONS?[*#\\s:]*\\s*([\\s\\S]*?)(?=${headerPrefix}(?:(?:SMART\\s*)?NOTES?|REEL\\s*SCRIPT|HIGHLIGHTS?)[*#\\s:]*|$)`, 'i'));
-    if (captionsMatch) sections.captions = captionsMatch[1];
-
-    const reelMatch = raw.match(new RegExp(`${headerPrefix}REEL\\s*SCRIPT[*#\\s:]*\\s*([\\s\\S]*?)(?=${headerPrefix}(?:(?:SMART\\s*)?NOTES?|CAPTIONS?|HIGHLIGHTS?)[*#\\s:]*|$)`, 'i'));
-    if (reelMatch) sections.reel = reelMatch[1];
-
-    const highlightsMatch = raw.match(new RegExp(`${headerPrefix}HIGHLIGHTS?[*#\\s:]*\\s*([\\s\\S]*?)(?=${headerPrefix}(?:(?:SMART\\s*)?NOTES?|CAPTIONS?|REEL\\s*SCRIPT)[*#\\s:]*|$)`, 'i'));
-    if (highlightsMatch) sections.highlights = highlightsMatch[1];
-  }
-
-  // Parse sections into structured data
-  let notes = sections.notes.trim();
-
-  let captions: string[] = sections.captions
-    .split(/\n/)
+  let captions: string[] = sections.captions.split("\n")
     .map(l => l.replace(/^\d+[\.\)]\s*/, "").replace(/^\*\*(.*?)\*\*/, "$1").trim())
     .filter(l => l.length > 5);
 
-  let hook = "", reelContent = "", cta = "";
   const r = sections.reel;
-  hook = r.match(/\bHook\b[^:]*:\s*(.*?)(?=\bContent\b[^:]*:|\bBody\b[^:]*:|\bCTA\b[^:]*:|$)/is)?.[1]?.trim() || 
-         r.split(/\n/)[0]?.replace(/.*Hook[^:]*:\s*/i, "")?.trim() || "";
-  reelContent = r.match(/\b(?:Content|Body)\b[^:]*:\s*(.*?)(?=\bCTA\b[^:]*:|$)/is)?.[1]?.trim() || "";
-  cta = r.match(/\bCTA\b[^:]*:\s*(.*?)(?=$)/is)?.[1]?.trim() || "";
+  const hook = r.match(/\bHook\b[^:]*:\s*(.*?)(?=\bContent\b[^:]*:|\bBody\b[^:]*:|\bCTA\b[^:]*:|$)/is)?.[1]?.trim() || "";
+  const reelContent = r.match(/\b(?:Content|Body)\b[^:]*:\s*(.*?)(?=\bCTA\b[^:]*:|$)/is)?.[1]?.trim() || "";
+  const cta = r.match(/\bCTA\b[^:]*:\s*(.*?)(?=$)/is)?.[1]?.trim() || "";
 
   const highlights: any[] = [];
-  const hText = sections.highlights;
-  if (hText) {
-    const clipBlocks = hText.split(/(?:^|\n)(?:\d+[\.\)]\s*)?[#*\s]*CLIP[*#\s:]*\s*/i).filter(b => b.trim());
-    clipBlocks.forEach(block => {
-      let title = block.split(/\n/)[0]?.trim() || "Clip";
-      title = title.replace(/^\*\*(.*?)\*\*.*$/, '$1');
-      
-      const timeMatch = block.match(/TIME:.*?(\d{1,2}:?\d{0,2})\s*[-–]\s*(\d{1,2}:?\d{0,2})/i);
-      const reasonMatch = block.match(/REASON:\s*([\s\S]*?)$/is);
-      
-      if (timeMatch) {
-        const parseToSeconds = (ts: string) => {
-          if (ts.includes(':')) {
-            const parts = ts.split(':');
-            return parseInt(parts[0]) * 60 + (parseInt(parts[1]) || 0);
-          }
-          return parseInt(ts) || 0;
-        };
-        const start = parseToSeconds(timeMatch[1]);
-        const end = parseToSeconds(timeMatch[2]);
-        if (start >= 0 && end > start) {
-          highlights.push({ title, start, end, reason: reasonMatch?.[1]?.trim() || "" });
-        }
-      }
-    });
-  }
-
-  // FINAL ULTRA-FALLBACK: If everything is empty (model ignored formatting), put everything in notes
-  if (!notes && captions.length === 0 && !hook && !reelContent) {
-    console.log("Ultra-fallback triggered: AI ignored all tags.");
-    notes = raw.trim();
-  }
+  sections.highlights.split(/CLIP[*#\s:]*/i).filter(b => b.trim()).forEach(block => {
+    const timeMatch = block.match(/TIME:.*?(\d{1,2}:?\d{0,2})\s*[-–]\s*(\d{1,2}:?\d{0,2})/i);
+    if (timeMatch) highlights.push({ title: block.split("\n")[0].trim(), start: parseInt(timeMatch[1]) || 0, end: parseInt(timeMatch[2]) || 0 });
+  });
 
   return {
-    notes: notes || "AI summary could not be extracted. Please try a different model or video.",
-    captions: captions.length ? captions : ["Social captions could not be formatted. Try a more powerful model."],
-    reelScript: { 
-      hook: hook || "Ready for your next viral moment?", 
-      content: reelContent || "Video content summarized and ready for extraction.", 
-      cta: cta || "Check the link in bio!" 
-    },
-    highlights: highlights
+    notes: sections.notes.trim() || raw.trim(),
+    captions: captions.length ? captions : ["Social captions could not be formatted."],
+    reelScript: { hook: hook || "New Viral Script", content: reelContent || "Video summarized.", cta: cta || "Link in bio" },
+    highlights
   };
 }
 
 function buildPrompt(transcript: string, tone: string): string {
-  const toneInstruction = {
-    engaging: "Use a punchy, viral, and highly engaging tone. Use plenty of emojis and strong hooks.",
-    professional: "Use a formal, clean, and professional tone. Avoid excessive emojis and focus on clarity and authority.",
-    funny: "Use a humorous, lighthearted, and witty tone. Make it entertaining while still being informative.",
-    educational: "Use an informative, clear, and didactic tone. Focus on structured learning and deep insights.",
-    minimalist: "Use a direct, concise, and minimalist tone. No fluff, just the essential information."
-  }[tone] || "Use a simple, engaging tone.";
-
-  return `Analyze this video transcript and create four sections:
-  
-  TONE INSTRUCTION: ${toneInstruction}
-
-  CRITICAL: 
-  - ALWAYS start each section with the EXACT header below.
-  - DO NOT prefix headers with numbers like "1." or "(1)".
-
-Header 1 - NOTES: Create structured notes with headings (use ##) and dots (use •).
-
-Header 2 - CAPTIONS: Create exactly 6 short social media captions.
-
-Header 3 - REEL SCRIPT: Create a viral reel script with Hook, Content, and CTA sections.
-
-Header 4 - HIGHLIGHTS: Identify the TOP 5-10 most viral and engaging moments. For long videos, strive for at least 7 high-quality highlights. 
-Every highlight MUST be between 30 and 90 seconds.
-Return EXACTLY in this format for EACH highlight:
-CLIP: [Title]
-TIME: [Start-End] (in seconds)
-REASON: [Why it is viral]
-
-Return in this EXACT structure:
-
-NOTES:
-[structured notes]
-
-CAPTIONS:
-1. [caption]
-...
-
-REEL SCRIPT:
-Hook: [hook]
-Content: [content]
-CTA: [cta]
-
-HIGHLIGHTS:
-CLIP: [title]
-TIME: [start-end]
-REASON: [reason]
-
-TRANSCRIPT:
+  return `Analyze this video transcript and create four sections: NOTES, CAPTIONS, REEL SCRIPT, and HIGHLIGHTS.
+Tone: ${tone}. Start each section with its name.
+Transcript:
 ${transcript}`;
 }
 
-// ─── Provider Engines ─────────────────────────────────
-
-async function callGemini(apiKey: string, model: string, prompt: string): Promise<string> {
-  const genAI = new GoogleGenerativeAI(apiKey);
-  const geminiModel = genAI.getGenerativeModel({ model });
-  const result = await geminiModel.generateContent(prompt);
-  return result.response.text();
-}
-
-async function callOpenAICompat(
-  apiKey: string,
-  model: string,
-  prompt: string,
-  baseUrl: string,
-  referer?: string
-): Promise<string> {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${apiKey}`,
-  };
-  if (referer) {
-    headers["HTTP-Referer"] = referer;
-    headers["X-Title"] = "AI Content Repurposer";
-  }
-
+async function callOpenAICompat(apiKey: string, model: string, prompt: string, baseUrl: string): Promise<string> {
   const res = await fetch(`${baseUrl}/chat/completions`, {
     method: "POST",
-    headers,
-    body: JSON.stringify({
-      model,
-      messages: [{ role: "user", content: prompt }],
-      max_tokens: 4096,
-      temperature: 0.7,
-    }),
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({ model, messages: [{ role: "user", content: prompt }] }),
   });
-
-  let data: any = {};
-  try {
-    data = await res.json();
-  } catch (e) {
-    throw new Error(`Failed to parse API response: ${res.statusText}`);
-  }
-
-  if (!res.ok || data.error) {
-    const errorBody = data.error || data;
-    const msg = errorBody.message || errorBody.error?.message || `HTTP ${res.status}: ${res.statusText}`;
-    
-    console.error(`AI API Error (${model}):`, JSON.stringify(data, null, 2));
-
-    if (res.status === 401 || String(errorBody.code) === "401") {
-      throw new Error("Invalid API key. Please check your key and try again.");
-    }
-    if (res.status === 404 || msg.toLowerCase().includes("not a valid model") || msg.toLowerCase().includes("model not found")) {
-      throw new Error(`Model not found: "${model}". Please select a different model.`);
-    }
-    if (res.status === 429 || msg.toLowerCase().includes("rate limit")) {
-      throw new Error("Rate limit exceeded. Please wait a moment and try again.");
-    }
-    if (res.status === 402 || msg.toLowerCase().includes("insufficient") || msg.toLowerCase().includes("credits")) {
-      throw new Error("Insufficient credits or balance. Please top up your account or use a free model.");
-    }
-    throw new Error(msg);
-  }
-
-  const content = data.choices?.[0]?.message?.content;
-  if (!content) {
-    console.error("Empty AI Response Data:", JSON.stringify(data, null, 2));
-    throw new Error("The model returned an empty response. This can happen with free models during high traffic. Please try again or use a different model.");
-  }
-
-  return content;
+  const data = await res.json();
+  return data.choices?.[0]?.message?.content || "";
 }
 
-
-async function generateWithProvider(
-  providerId: ProviderId,
-  apiKey: string,
-  model: string,
-  prompt: string
-): Promise<string> {
-  const provider = getProvider(providerId);
-
-  switch (providerId) {
-    case "gemini":
-      return callGemini(apiKey, model, prompt);
-
-    case "groq":
-      return callOpenAICompat(apiKey, model, prompt, "https://api.groq.com/openai/v1");
-
-    case "openrouter":
-      return callOpenAICompat(
-        apiKey,
-        model,
-        prompt,
-        "https://openrouter.ai/api/v1",
-        "https://ai-repurposer.app"
-      );
-
-    case "nvidia":
-      return callOpenAICompat(
-        apiKey,
-        model,
-        prompt,
-        provider.baseUrl || "https://integrate.api.nvidia.com/v1"
-      );
-
-    case "openai":
-      return callOpenAICompat(apiKey, model, prompt, "https://api.openai.com/v1");
-
-    default:
-      throw new Error(`Unknown provider: ${providerId}`);
+async function generateWithProvider(providerId: ProviderId, apiKey: string, model: string, prompt: string): Promise<string> {
+  if (providerId === "gemini") {
+    const genAI = new GoogleGenerativeAI(apiKey);
+    return (await genAI.getGenerativeModel({ model }).generateContent(prompt)).response.text();
   }
+  const baseUrl = providerId === "openai" ? "https://api.openai.com/v1" : providerId === "groq" ? "https://api.groq.com/openai/v1" : "https://openrouter.ai/api/v1";
+  return callOpenAICompat(apiKey, model, prompt, baseUrl);
 }
 
 // ─── Main Route Handler ───────────────────────────────
 export async function POST(req: NextRequest) {
   try {
-    const { url, apiKey, provider = "gemini", model, tone = "engaging" } = await req.json();
+    const { url, apiKey, provider = "openai", model = "gpt-4o", tone = "engaging", useAI = true } = await req.json();
+    const videoId = extractVideoId(url?.trim());
+    if (!videoId) return NextResponse.json({ error: "Invalid YouTube URL" }, { status: 400 });
 
-    if (!url || !apiKey) {
-      return NextResponse.json(
-        { error: "YouTube URL and API key are required." },
-        { status: 400 }
-      );
-    }
-
-    const videoId = extractVideoId(url.trim());
-    if (!videoId) {
-      return NextResponse.json(
-        { error: "Invalid YouTube URL. Please paste a valid YouTube video link." },
-        { status: 400 }
-      );
-    }
-
-    // Get provider config + resolve model
-    const providerConfig = getProvider(provider as ProviderId);
-    const resolvedModel = model || providerConfig.models[0].id;
-
-    // Step 1: Fetch transcript using multiple strategies
-    let transcript = "";
-    let rawItems: any[] = [];
-    
-    console.log("Starting transcript extraction for video:", videoId);
+    console.log("Processing:", videoId);
 
     async function tryFetchTranscript(vId: string) {
-      // --- Strategy 0: Local yt-dlp (Only if running locally and file exists) ---
-      const isVercel = process.env.VERCEL === "1" || !!process.env.NEXT_PUBLIC_VERCEL_URL;
-      const ytDlpPath = path.join(process.cwd(), "yt-dlp.exe");
-
-      if (!isVercel && fs.existsSync(ytDlpPath)) {
-        try {
-          console.log("Attempting Strategy 0: Local yt-dlp.exe...");
-          const vUrl = `https://www.youtube.com/watch?v=${vId}`;
-          const cmd = `"${ytDlpPath}" --dump-json --skip-download "${vUrl}"`;
-          const output = execSync(cmd, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
-          const data = JSON.parse(output);
-          
-          const subs = data.subtitles || data.automatic_captions;
-          const enSubs = subs?.en || subs?.['en-US'] || subs?.['en-GB'] || Object.values(subs || {})[0];
-
-          if (enSubs && Array.isArray(enSubs)) {
-            const json3Url = enSubs.find((s: any) => s.ext === 'json3')?.url || enSubs[0].url;
-            if (json3Url) {
-              const res = await fetch(json3Url);
-              const transcriptData = await res.json();
-              if (transcriptData?.events) {
-                return transcriptData.events
-                  .filter((e: any) => e.segs && e.segs.length > 0)
-                  .map((e: any) => ({
-                    text: e.segs.map((s: any) => s.utf8).join(""),
-                    offset: e.tStartMs,
-                  }));
-              }
-            }
-          }
-        } catch (e) {
-          console.warn("Strategy 0 (yt-dlp) failed:", e instanceof Error ? e.message : e);
-        }
-      }
-
-      // --- Strategy 1: youtube-transcript package ---
+      // 1. Package Fallback
       try {
-        console.log("Attempting Strategy 1: youtube-transcript...");
-        const result = await Promise.race([
-          YoutubeTranscript.fetchTranscript(vId),
-          new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Timeout")), 8000))
-        ]);
-        if (result && result.length > 0) return result;
-      } catch (e) {
-        console.warn("Strategy 1 failed:", e instanceof Error ? e.message : e);
-      }
+        const res = await YoutubeTranscript.fetchTranscript(vId);
+        if (res?.length) return res;
+      } catch {}
 
-      // --- Strategy 2: Manual InnerTube Fetch (IOS Client - More Resilient) ---
+      // 2. Manual Mobile Fetch (Native Node)
       try {
-        console.log("Attempting Strategy 2: Manual InnerTube (IOS)...");
-        const response = await fetch("https://www.youtube.com/youtubei/v1/player", {
+        const res = await fetch("https://www.youtube.com/youtubei/v1/player", {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "User-Agent": "com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X; en_US)"
-          },
-          body: JSON.stringify({
-            context: {
-              client: {
-                clientName: "IOS",
-                clientVersion: "19.29.1",
-                deviceModel: "iPhone16,2",
-                osName: "iOS",
-                osVersion: "17.5.1.21F90",
-                hl: "en",
-                gl: "US",
-                utcOffsetMinutes: 0
-              }
-            },
-            videoId: vId
-          })
+          headers: { "Content-Type": "application/json", "User-Agent": "com.google.ios.youtube/19.29.1 (iPhone16,2; iOS 17_5_1)" },
+          body: JSON.stringify({ context: { client: { clientName: "IOS", clientVersion: "19.29.1" } }, videoId: vId })
         });
-        
-        if (response.ok) {
-          const data = await response.json();
-          const tracks = data?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
-          if (tracks && tracks.length > 0) {
-            const trackUrl = tracks[0].baseUrl;
-            const transcriptRes = await fetch(trackUrl + "&fmt=json3");
-            const transcriptData = await transcriptRes.json();
-            if (transcriptData?.events) {
-              return transcriptData.events
-                .filter((e: any) => e.segs && e.segs.length > 0)
-                .map((e: any) => ({
-                  text: e.segs.map((s: any) => s.utf8).join(""),
-                  offset: e.tStartMs,
-                  duration: e.dDurationMs
-                }));
-            }
-          }
+        const data = await res.json();
+        const trackUrl = data?.captions?.playerCaptionsTracklistRenderer?.captionTracks?.[0]?.baseUrl;
+        if (trackUrl) {
+          const tRes = await (await fetch(trackUrl + "&fmt=json3")).json();
+          return tRes.events?.filter((e: any) => e.segs).map((e: any) => ({ text: e.segs.map((s: any) => s.utf8).join(""), offset: e.tStartMs }));
         }
-      } catch (e) {
-        console.warn("Strategy 2 failed:", e instanceof Error ? e.message : e);
-      }
+      } catch {}
 
-      // --- Strategy 3: Piped API Fallback (Public Proxies) ---
-      const pipedInstances = [
-        "https://pipedapi.kavin.rocks",
-        "https://pipedapi.adminforge.de",
-        "https://api.piped.asia",
-        "https://pipedapi.smnz.de"
-      ];
-
-      for (const instance of pipedInstances) {
+      // 3. Piped APIs
+      for (const api of ["https://pipedapi.kavin.rocks", "https://api.piped.asia"]) {
         try {
-          console.log(`Attempting Strategy 3: Piped Instance (${new URL(instance).hostname})...`);
-          const res = await fetch(`${instance}/streams/${vId}`);
-          if (res.ok) {
-            const data = await res.json();
-            const captionTrack = data.subtitles?.find((s: any) => s.code === "en" || s.code.startsWith("en-")) || data.subtitles?.[0];
-            
-            if (captionTrack?.url) {
-              const subRes = await fetch(captionTrack.url);
-              const subText = await subRes.text();
-              
-              // Simple VTT/SRT parser for Piped output
-              if (subText.includes("WEBVTT")) {
-                const lines = subText.split("\n\n").slice(1);
-                return lines.map(block => {
-                  const parts = block.split("\n");
-                  if (parts.length >= 2) {
-                    return { text: parts.slice(1).join(" ").trim(), offset: 0 }; // Simplified
-                  }
-                  return null;
-                }).filter(Boolean);
-              }
-            }
+          const data = await (await fetch(`${api}/streams/${vId}`)).json();
+          const track = data.subtitles?.find((s: any) => s.code.startsWith("en"));
+          if (track?.url) {
+            const text = await (await fetch(track.url)).text();
+            return text.split("\n\n").slice(1).map(b => ({ text: b.split("\n").slice(1).join(" "), offset: 0 }));
           }
-        } catch (e) {
-          console.warn(`Piped instance ${instance} failed.`);
-        }
+        } catch {}
       }
-
       return null;
     }
 
-    const fetchedItems = await tryFetchTranscript(videoId);
-    if (fetchedItems && fetchedItems.length > 0) {
-      rawItems = fetchedItems;
-      console.log(`Successfully fetched ${rawItems.length} transcript items.`);
+    const items = await tryFetchTranscript(videoId);
+    if (!items?.length) return NextResponse.json({ error: "Transcript blocked or unavailable" }, { status: 422 });
+
+    const fullTranscript = items.map(i => i.text).join(" ").replace(/\s+/g, " ");
+
+    // Standard Response if useAI is false
+    if (!useAI || !apiKey) {
+      return NextResponse.json({ transcript: fullTranscript, videoId });
     }
 
-    if (rawItems && rawItems.length > 0) {
-      // Format with timestamps: [00:15] text...
-      transcript = rawItems.map((i) => {
-        const offset = i.offset || i.start * 1000 || 0;
-        const mins = Math.floor(offset / 1000 / 60);
-        const secs = Math.floor((offset / 1000) % 60);
-        const timeStr = `[${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}]`;
-        return `${timeStr} ${i.text}`;
-      }).join(" ").replace(/\s+/g, " ").trim();
-    }
+    // AI Processing
+    const prompt = buildPrompt(fullTranscript.slice(0, 10000), tone);
+    const rawAiResponse = await generateWithProvider(provider as ProviderId, apiKey, model, prompt);
+    const parsed = parseAIResponse(rawAiResponse);
 
-    if (!transcript || transcript.length < 50) {
-      console.error("Transcript extraction failed completely.");
-      return NextResponse.json(
-        { 
-          error: "Could not extract transcript. YouTube is blocking the request or the video has no captions.",
-          details: "YouTube occasionally blocks automated requests. Try these steps:\n1. Wait 2-3 minutes and try again.\n2. Ensure the video actually has CC/Subtitles available.\n3. Try a different video to see if it's a specific block."
-        },
-        { status: 422 }
-      );
-    }
+    return NextResponse.json({ ...parsed, videoId });
 
-    // Limit to ~2500 words to massively speed up AI processing time (reduces waiting time for user)
-    const words = transcript.split(" ");
-    const limitedTranscript = words.length > 2500
-      ? words.slice(0, 2500).join(" ") + "..."
-      : transcript;
-
-    // Step 2: AI Generation
-    const prompt = buildPrompt(limitedTranscript, tone);
-    const rawText = await generateWithProvider(
-      provider as ProviderId,
-      apiKey,
-      resolvedModel,
-      prompt
-    );
-
-    const parsed = parseAIResponse(rawText);
-
-    return NextResponse.json({
-      ...parsed,
-      videoId,
-      providerUsed: providerConfig.name,
-      modelUsed: resolvedModel,
-    });
-
-  } catch (err: unknown) {
-    console.error("API Error:", err);
-    const message = err instanceof Error ? err.message : "An unexpected error occurred";
-
-    if (message.includes("API_KEY_INVALID") || message.includes("invalid_api_key") || message.toLowerCase().includes("api key")) {
-      return NextResponse.json(
-        { error: "Invalid API key. Please check your key and try again." },
-        { status: 401 }
-      );
-    }
-    if (message.includes("QUOTA") || message.includes("quota") || message.includes("rate_limit") || message.includes("429")) {
-      return NextResponse.json(
-        { error: "API quota or rate limit exceeded. Please wait and try again." },
-        { status: 429 }
-      );
-    }
-    if (message.includes("model") && message.includes("not found")) {
-      return NextResponse.json(
-        { error: `Model not found. Please select a different model. (${message})` },
-        { status: 400 }
-      );
-    }
-
-    return NextResponse.json({ error: message }, { status: 500 });
+  } catch (err: any) {
+    return NextResponse.json({ error: err.message }, { status: 500 });
   }
 }
