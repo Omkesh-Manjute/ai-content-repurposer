@@ -63,7 +63,7 @@ function parseAIResponse(raw: string) {
 }
 
 async function tryFetchTranscript(vId: string): Promise<TranscriptItem[] | null> {
-  // Helpers for extraction from data
+  // Helpers for extraction
   const extractFromPlayerResponse = (data: any) => {
     const tracks = data.captions?.playerCaptionsTracklistRenderer?.captionTracks;
     if (tracks?.length) return tracks.find((t: any) => t.languageCode === "en") || tracks[0];
@@ -79,13 +79,31 @@ async function tryFetchTranscript(vId: string): Promise<TranscriptItem[] | null>
     }));
   };
 
-  // Strategy 1: Innertube Android (Direct)
+  // Strategy 1: Piped API (Very robust community proxy)
+  const pipedInstances = ["https://pipedapi.kavin.rocks", "https://pipedapi.tokhmi.xyz", "https://api.piped.victr.me"];
+  for (const api of pipedInstances) {
+    try {
+      const res = await fetch(`${api}/streams/${vId}`, { signal: AbortSignal.timeout(5000) });
+      const data = await res.json();
+      const sub = data.subtitles?.find((s: any) => s.code === "en") || data.subtitles?.[0];
+      if (sub?.url) {
+        const vttRes = await fetch(sub.url);
+        const vtt = await vttRes.text();
+        return vtt.split("\n\n").filter(b => b.includes("-->")).map(b => ({
+          text: b.split("\n").slice(1).join(" ").replace(/<[^>]*>/g, "").trim(),
+          offset: 0
+        })).filter(i => i.text.length > 0);
+      }
+    } catch (e) {}
+  }
+
+  // Strategy 2: Innertube MWEB
   try {
     const res = await fetch("https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2Sl_Y6G397J8u5kY37rJ3S5c6G8", {
       method: "POST",
       body: JSON.stringify({
         videoId: vId,
-        context: { client: { clientName: "ANDROID", clientVersion: "17.31.35", hl: "en", gl: "US" } }
+        context: { client: { clientName: "MWEB", clientVersion: "2.20230405.08.01", hl: "en" } }
       }),
       headers: { "Content-Type": "application/json" }
     });
@@ -93,13 +111,13 @@ async function tryFetchTranscript(vId: string): Promise<TranscriptItem[] | null>
     if (track) return await fetchCaptionData(track.baseUrl);
   } catch (e) {}
 
-  // Strategy 2: Innertube MWEB (Mobile Web - Often works on cloud IPs)
+  // Strategy 3: Innertube Android (Direct)
   try {
     const res = await fetch("https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2Sl_Y6G397J8u5kY37rJ3S5c6G8", {
       method: "POST",
       body: JSON.stringify({
         videoId: vId,
-        context: { client: { clientName: "MWEB", clientVersion: "2.20230405.08.01", hl: "en", gl: "US" } }
+        context: { client: { clientName: "ANDROID", clientVersion: "17.31.35", hl: "en" } }
       }),
       headers: { "Content-Type": "application/json" }
     });
@@ -107,12 +125,11 @@ async function tryFetchTranscript(vId: string): Promise<TranscriptItem[] | null>
     if (track) return await fetchCaptionData(track.baseUrl);
   } catch (e) {}
 
-  // Strategy 3: CORS Proxy Rotator (Mimics residential-like behavior)
+  // Strategy 4: CORS Proxy Rotator
   const proxies = [
     `https://api.allorigins.win/raw?url=`,
     `https://api.codetabs.com/v1/proxy?quest=`,
   ];
-  
   for (const proxy of proxies) {
     try {
       const targetUrl = encodeURIComponent(`https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2Sl_Y6G397J8u5kY37rJ3S5c6G8`);
@@ -129,25 +146,9 @@ async function tryFetchTranscript(vId: string): Promise<TranscriptItem[] | null>
     } catch (e) {}
   }
 
-  // Strategy 4: Invidious Rotator (External nodes)
-  const instances = ["https://inv.tux.rs", "https://yewtu.be", "https://invidious.snopyta.org", "https://vid.puffyan.us"];
-  for (const inst of instances.sort(() => Math.random() - 0.5)) {
-    try {
-      const response = await fetch(`${inst}/api/v1/videos/${vId}?fields=captions`, { signal: AbortSignal.timeout(4000) });
-      const data = await response.json();
-      const cap = data.captions?.find((c: any) => c.languageCode === "en") || data.captions?.[0];
-      if (cap?.url) {
-        const vtt = await (await fetch(`${inst}${cap.url}`)).text();
-        return vtt.split("\n\n").filter(b => b.includes("-->")).map(b => ({
-          text: b.split("\n").slice(1).join(" ").replace(/<[^>]*>/g, "").trim(),
-          offset: 0
-        })).filter(i => i.text.length > 0);
-      }
-    } catch (e) {}
-  }
-
   return null;
 }
+
 
 export async function POST(req: NextRequest) {
   try {
