@@ -1,0 +1,33 @@
+{
+  "name": "collega-project---copy",
+  "version": "1.0.0",
+  "description": "",
+  "main": "node_modules/expo/AppEntry.js",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Omkesh-Manjute/ai-content-repurposer.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Omkesh-Manjute/ai-content-repurposer/issues"
+  },
+  "homepage": "https://github.com/Omkesh-Manjute/ai-content-repurposer#readme",
+  "dependencies": {
+    "expo": "~51.0.28",
+    "expo-status-bar": "~1.12.1",
+    "express": "^5.2.1",
+    "openai": "^6.34.0",
+    "react": "^18.2.0",
+    "react-native": "^0.74.5",
+    "youtube-transcript": "^1.3.0"
+  }
+}

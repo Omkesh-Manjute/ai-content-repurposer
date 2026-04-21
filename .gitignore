@@ -1,0 +1,9 @@
+node_modules
+
+# Ignore large dependency folders
+ffmpeg-*/
+node-v*/
+.next/
+*.exe
+package-lock.json
+temp/
