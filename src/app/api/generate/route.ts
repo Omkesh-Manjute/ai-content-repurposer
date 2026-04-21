@@ -31,6 +31,7 @@ function parseAIResponse(raw: string) {
     captions: "", 
     keywords: "" 
   };
+  
   const lines = raw.split("\n");
   let currentKey: keyof typeof sections | null = null;
 
@@ -54,6 +55,7 @@ function parseAIResponse(raw: string) {
     } else if (/KEYWORDS|TAGS|कीवर्ड/i.test(upper) && (trimmed.includes("🔑") || trimmed.includes("7."))) {
       currentKey = "keywords"; continue;
     }
+    
     if (currentKey) sections[currentKey] += line + "\n";
   }
 
@@ -89,26 +91,15 @@ Convert the transcript into structured, high-quality content in a "${tone}" tone
 OUTPUT FORMAT:
 
 1. 📌 SHORT SUMMARY (5–6 lines)
-- Simple, clear explanation of the video in Hinglish
-
 2. 🧠 DETAILED NOTES
-- Bullet points
-- Key concepts explained simply
-- Important insights highlighted
-
 3. 🎯 REELS / SHORTS SCRIPT (3 versions)
-Each version MUST include:
-- VERSION: [number]
-- Hook: (catchy first 2-3 seconds)
-- Main: (engaging content body)
-- Ending: (CTA follow/subscribe)
-
+Each MUST include: VERSION, Hook, Main, Ending.
 4. 🔥 VIRAL HOOKS (10)
 5. 🏷️ TITLES (5)
 6. 📢 CAPTIONS (3)
 7. 🔑 KEYWORDS / TAGS
 
-STYLE: Hinglish, Simple, High engagement, No fluff. Do not mention "transcript".`;
+STYLE: Hinglish, Simple, High engagement, No fluff. No mentions of "transcript".`;
 }
 
 async function callOpenAICompat(apiKey: string, model: string, prompt: string, baseUrl: string): Promise<string> {
@@ -140,16 +131,16 @@ export async function POST(req: NextRequest) {
     if (!videoId) return NextResponse.json({ error: "Invalid YouTube URL" }, { status: 400 });
 
     async function tryFetchTranscript(vId: string): Promise<TranscriptItem[] | null> {
-      // Strategy 1: youtube-transcript
+      // 1. youtube-transcript (Standard)
       try {
         const res = await YoutubeTranscript.fetchTranscript(vId);
         if (res?.length) return res;
       } catch {}
 
-      // Strategy 2: Manual HTML Scrape (Universal)
+      // 2. HTML Scrape (Browser impersonation)
       try {
         const pageRes = await fetch(`https://www.youtube.com/watch?v=${vId}`, {
-          headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" }
+          headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/121.0.0.0" }
         });
         const html = await pageRes.text();
         const captionsMatch = html.match(/"captionTracks":\s*(\[.*?\])/);
@@ -157,7 +148,7 @@ export async function POST(req: NextRequest) {
           const tracks = JSON.parse(captionsMatch[1]);
           const track = tracks.find((t: any) => t.languageCode === "en") || tracks[0];
           if (track?.baseUrl) {
-            const transcriptRaw = await (await fetch(track.baseUrl + "&fmt=json3")).json();
+            const transcriptRaw = await (await fetch(track.baseUrl + "&fmt=json3")).json() as any;
             return transcriptRaw.events?.filter((e: any) => e.segs).map((e: any) => ({
               text: e.segs.map((s: any) => s.utf8).join(""),
               offset: e.tStartMs
@@ -166,21 +157,15 @@ export async function POST(req: NextRequest) {
         }
       } catch {}
 
-      // Strategy 3: Piped API (Global fallback)
-      const pipedInstances = [
-        "https://pipedapi.kavin.rocks",
-        "https://api.piped.asia",
-        "https://piped-api.garudalinux.org",
-        "https://pipedapi.colbybros.online"
-      ];
-      for (const instance of pipedInstances) {
+      // 3. Invidious API (Very resilient to blocking)
+      const invidiousInstances = ["https://yewtu.be", "https://inv.tux.rs", "https://invidious.snopyta.org"];
+      for (const inst of invidiousInstances) {
         try {
-          const res = await fetch(`${instance}/streams/${vId}`);
-          const data = await res.json() as any;
-          const track = data.subtitles?.find((s: any) => s.code.startsWith("en")) || data.subtitles?.[0];
-          if (track?.url) {
-            const vtt = await (await fetch(track.url)).text();
-            return vtt.split("\n\n").slice(1).map(block => ({ text: block.split("\n").slice(1).join(" "), offset: 0 })).filter(i => i.text.length > 2);
+          const data = await (await fetch(`${inst}/api/v1/videos/${vId}?fields=captions`)).json() as any;
+          const cap = data.captions?.find((c: any) => c.label.includes("English")) || data.captions?.[0];
+          if (cap?.url) {
+            const vtt = await (await fetch(`${inst}${cap.url}`)).text();
+            return vtt.split("\n\n").slice(1).map(b => ({ text: b.split("\n").slice(1).join(" "), offset: 0 }));
           }
         } catch {}
       }
@@ -194,7 +179,7 @@ export async function POST(req: NextRequest) {
 
     if (!useAI || !apiKey) return NextResponse.json({ transcript: fullTranscript, videoId });
 
-    const prompt = buildPrompt(fullTranscript.slice(0, 12000), tone);
+    const prompt = buildPrompt(fullTranscript.slice(0, 10000), tone);
     const rawAiResponse = await generateWithProvider(provider as ProviderId, apiKey, model, prompt);
     const parsed = parseAIResponse(rawAiResponse);
 
