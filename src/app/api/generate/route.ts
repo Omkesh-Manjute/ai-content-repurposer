@@ -3,6 +3,11 @@ import { YoutubeTranscript } from "youtube-transcript";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import type { ProviderId } from "@/lib/providers";
 
+interface TranscriptItem {
+  text: string;
+  offset: number;
+}
+
 // ─── Helpers ──────────────────────────────────────────
 function extractVideoId(url: string): string | null {
   const patterns = [
@@ -17,7 +22,6 @@ function extractVideoId(url: string): string | null {
 }
 
 function parseAIResponse(raw: string) {
-  // We'll split the sections based on the headings defined in the prompt
   const sections: Record<string, string> = { 
     summary: "", 
     notes: "", 
@@ -55,7 +59,6 @@ function parseAIResponse(raw: string) {
     if (currentKey) sections[currentKey] += line + "\n";
   }
 
-  // Formatting reel scripts into 3 versions
   const reelScripts = sections.reels.split(/VERSION\s*\d+|वर्जन\s*\d+/i)
     .filter(s => s.trim().length > 20)
     .map(s => {
@@ -135,7 +138,7 @@ async function callOpenAICompat(apiKey: string, model: string, prompt: string, b
       messages: [{ role: "system", content: "You are a viral content creator." }, { role: "user", content: prompt }] 
     }),
   });
-  const data = await res.json();
+  const data = await res.json() as any;
   if (data.error) throw new Error(data.error.message || "AI Provider Error");
   return data.choices?.[0]?.message?.content || "";
 }
@@ -159,28 +162,26 @@ export async function POST(req: NextRequest) {
     const videoId = extractVideoId(url?.trim());
     if (!videoId) return NextResponse.json({ error: "Invalid YouTube URL" }, { status: 400 });
 
-    async function tryFetchTranscript(vId: string) {
-      // 1. Package Fallback
+    async function tryFetchTranscript(vId: string): Promise<TranscriptItem[] | null> {
       try {
         const res = await YoutubeTranscript.fetchTranscript(vId);
-        if (res?.length) return res;
+        if (res?.length) return res.map(i => ({ text: i.text, offset: i.offset }));
       } catch {}
 
-      // 2. InnerTube API - Android Client
       try {
         const androidRes = await fetch("https://www.youtube.com/youtubei/v1/player", {
           method: "POST",
-          headers: { "Content-Type": "application/json", "User-Agent": "com.google.android.youtube/19.29.1 (iPhone16,2; iOS 17_5_1)" },
+          headers: { "Content-Type": "application/json", "User-Agent": "com.google.android.youtube/19.29.1" },
           body: JSON.stringify({
             context: { client: { clientName: "ANDROID", clientVersion: "19.29.1" } },
             videoId: vId
           })
         });
-        const player = await androidRes.json();
+        const player = await androidRes.json() as any;
         const tracks = player.captions?.playerCaptionsTracklistRenderer?.captionTracks;
         if (tracks?.length) {
           const track = tracks.find((t: any) => t.languageCode === 'en') || tracks[0];
-          const transcriptJson = await (await fetch(track.baseUrl + "&fmt=json3")).json();
+          const transcriptJson = await (await fetch(track.baseUrl + "&fmt=json3")).json() as any;
           return transcriptJson.events
             ?.filter((e: any) => e.segs)
             .map((e: any) => ({
@@ -190,16 +191,11 @@ export async function POST(req: NextRequest) {
         }
       } catch {}
 
-      // 3. Piped APIs Fallback
-      const pipedInstances = [
-        "https://pipedapi.kavin.rocks",
-        "https://api.piped.asia",
-        "https://piped-api.garudalinux.org"
-      ];
+      const pipedInstances = ["https://pipedapi.kavin.rocks", "https://api.piped.asia"];
       for (const instance of pipedInstances) {
         try {
-          const res = await fetch(`${instance}/streams/${vId}`, { next: { revalidate: 60 } });
-          const streamData = await res.json();
+          const res = await fetch(`${instance}/streams/${vId}`);
+          const streamData = await res.json() as any;
           const subtitle = streamData.subtitles?.find((s: any) => s.code.startsWith("en")) || streamData.subtitles?.[0];
           if (subtitle?.url) {
             const vttText = await (await fetch(subtitle.url)).text();
@@ -213,7 +209,7 @@ export async function POST(req: NextRequest) {
     const items = await tryFetchTranscript(videoId);
     if (!items?.length) return NextResponse.json({ error: "Transcript blocked or unavailable" }, { status: 422 });
 
-    const fullTranscript = items.map(i => i.text).join(" ").replace(/\s+/g, " ");
+    const fullTranscript = items.map((i: TranscriptItem) => i.text).join(" ").replace(/\s+/g, " ");
 
     if (!useAI || !apiKey) {
       return NextResponse.json({ transcript: fullTranscript, videoId });
