@@ -3,6 +3,9 @@ import { YoutubeTranscript } from "youtube-transcript";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { getProvider } from "@/lib/providers";
 import type { ProviderId } from "@/lib/providers";
+import { execSync } from "child_process";
+import path from "path";
+import fs from "fs";
 
 
 // ─── Helpers ──────────────────────────────────────────
@@ -335,6 +338,41 @@ export async function POST(req: NextRequest) {
     console.log("Starting transcript extraction for video:", videoId);
 
     async function tryFetchTranscript(vId: string) {
+      // --- Strategy 0: Local yt-dlp (Only if running locally and file exists) ---
+      const isVercel = process.env.VERCEL === "1" || !!process.env.NEXT_PUBLIC_VERCEL_URL;
+      const ytDlpPath = path.join(process.cwd(), "yt-dlp.exe");
+
+      if (!isVercel && fs.existsSync(ytDlpPath)) {
+        try {
+          console.log("Attempting Strategy 0: Local yt-dlp.exe...");
+          const vUrl = `https://www.youtube.com/watch?v=${vId}`;
+          const cmd = `"${ytDlpPath}" --dump-json --skip-download "${vUrl}"`;
+          const output = execSync(cmd, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+          const data = JSON.parse(output);
+          
+          const subs = data.subtitles || data.automatic_captions;
+          const enSubs = subs?.en || subs?.['en-US'] || subs?.['en-GB'] || Object.values(subs || {})[0];
+
+          if (enSubs && Array.isArray(enSubs)) {
+            const json3Url = enSubs.find((s: any) => s.ext === 'json3')?.url || enSubs[0].url;
+            if (json3Url) {
+              const res = await fetch(json3Url);
+              const transcriptData = await res.json();
+              if (transcriptData?.events) {
+                return transcriptData.events
+                  .filter((e: any) => e.segs && e.segs.length > 0)
+                  .map((e: any) => ({
+                    text: e.segs.map((s: any) => s.utf8).join(""),
+                    offset: e.tStartMs,
+                  }));
+              }
+            }
+          }
+        } catch (e) {
+          console.warn("Strategy 0 (yt-dlp) failed:", e instanceof Error ? e.message : e);
+        }
+      }
+
       // --- Strategy 1: youtube-transcript package ---
       try {
         console.log("Attempting Strategy 1: youtube-transcript...");
