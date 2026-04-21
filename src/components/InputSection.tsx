@@ -50,10 +50,9 @@ function isValidYouTubeUrl(url: string): boolean {
 }
 
 interface InputSectionProps {
-  onGenerate: (url: string, apiKey: string, provider: ProviderId, model: string, tone: string, manualTranscript?: string) => void;
+  onGenerate: (url: string, apiKey: string, provider: ProviderId, model: string, tone: string) => void;
   errorMessage: string;
   isError: boolean;
-  isBlockError?: boolean;
 }
 
 const BADGE_COLORS: Record<string, string> = {
@@ -292,7 +291,7 @@ function ToneSelector({ selected, onChange }: { selected: string; onChange: (id:
 }
 
 // ─── Main InputSection ────────────────────────────────
-export default function InputSection({ onGenerate, errorMessage, isError, isBlockError }: InputSectionProps) {
+export default function InputSection({ onGenerate, errorMessage, isError }: InputSectionProps) {
   const [url, setUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [showKey, setShowKey] = useState(false);
@@ -302,8 +301,6 @@ export default function InputSection({ onGenerate, errorMessage, isError, isBloc
   const [rememberKey, setRememberKey] = useState(false);
   const [savedKeys, setSavedKeys] = useState<Record<string, string>>({});
   const [toneId, setToneId] = useState("engaging");
-  const [manualTranscript, setManualTranscript] = useState("");
-  const [showManualBox, setShowManualBox] = useState(false);
 
   const selectedProvider = PROVIDERS.find((p) => p.id === providerId)!;
 
@@ -360,10 +357,9 @@ export default function InputSection({ onGenerate, errorMessage, isError, isBloc
     if (!url.trim()) { setUrlError("Please enter a YouTube URL."); return; }
     if (!isValidYouTubeUrl(url)) { setUrlError("Please enter a valid YouTube URL (youtube.com or youtu.be)."); return; }
     if (!apiKey.trim()) { setUrlError(`Please enter your ${selectedProvider.name} API key.`); return; }
-    if (showManualBox && !manualTranscript.trim()) { setUrlError("Please paste the transcript below."); return; }
     
     setUrlError("");
-    onGenerate(url.trim(), apiKey.trim(), providerId, modelId, toneId, manualTranscript.trim() || undefined);
+    onGenerate(url.trim(), apiKey.trim(), providerId, modelId, toneId);
   };
 
   const handlePaste = async () => {
@@ -480,50 +476,11 @@ export default function InputSection({ onGenerate, errorMessage, isError, isBloc
           <ToneSelector selected={toneId} onChange={setToneId} />
         </div>
 
-        {/* Error & Manual Fallback */}
+        {/* Error */}
         {(urlError || isError) && (
-          <div style={{ marginBottom: "20px", display: "flex", flexDirection: "column", gap: "12px" }}>
-            <div style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: "12px", padding: "14px 18px", display: "flex", alignItems: "flex-start", gap: "10px" }}>
-              <span style={{ fontSize: "18px", flexShrink: 0 }}>⚠️</span>
-              <div style={{ flex: 1 }}>
-                <p style={{ fontSize: "14px", color: "#fca5a5", fontWeight: 600, marginBottom: "4px" }}>
-                  {isBlockError ? "YouTube is blocking our automated request." : "Error Occurred"}
-                </p>
-                <p style={{ fontSize: "13px", color: "#fca5a5", opacity: 0.8, margin: 0 }}>
-                  {urlError || errorMessage}
-                </p>
-                {isBlockError && !showManualBox && (
-                  <button 
-                    type="button"
-                    onClick={() => setShowManualBox(true)}
-                    style={{ marginTop: "12px", background: "white", color: "#ef4444", border: "none", padding: "8px 16px", borderRadius: "8px", fontSize: "13px", fontWeight: 700, cursor: "pointer" }}
-                  >
-                    Use Manual Transcript Fallback
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {showManualBox && (
-              <div className="fade-in" style={{ background: "var(--bg-hover-translucent)", border: "1px solid var(--accent-purple)40", borderRadius: "16px", padding: "20px" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-                  <label style={{ fontSize: "13px", fontWeight: 700, color: "var(--accent-purple)" }}>
-                    Paste YouTube Transcript Below
-                  </label>
-                  <button type="button" onClick={() => setShowManualBox(false)} style={{ background: "none", border: "none", color: "var(--text-muted)", fontSize: "11px", cursor: "pointer", textDecoration: "underline" }}>
-                    Cancel
-                  </button>
-                </div>
-                <textarea
-                  value={manualTranscript}
-                  onChange={(e) => setManualTranscript(e.target.value)}
-                  placeholder="Paste the transcript here... (Tip: Go to YouTube > Show Transcript > Select All > Copy)"
-                  style={{ width: "100%", height: "150px", background: "var(--bg-input)", border: "1px solid var(--border)", borderRadius: "12px", padding: "12px", color: "var(--text-primary)", fontSize: "13px", resize: "none", outline: "none" }}
-                  onFocus={(e) => (e.target.style.borderColor = "var(--accent-purple)")}
-                  onBlur={(e) => (e.target.style.borderColor = "var(--border)")}
-                />
-              </div>
-            )}
+          <div style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: "12px", padding: "14px 18px", marginBottom: "20px", display: "flex", alignItems: "flex-start", gap: "10px" }}>
+            <span style={{ fontSize: "18px", flexShrink: 0 }}>⚠️</span>
+            <p style={{ fontSize: "14px", color: "#fca5a5", lineHeight: 1.5, margin: 0 }}>{urlError || errorMessage}</p>
           </div>
         )}
 

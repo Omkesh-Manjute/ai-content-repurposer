@@ -63,7 +63,23 @@ function parseAIResponse(raw: string) {
 }
 
 async function tryFetchTranscript(vId: string): Promise<TranscriptItem[] | null> {
-  // Strategy 1: YouTubei (Innertube) API - Android Client
+  // Helpers for extraction from data
+  const extractFromPlayerResponse = (data: any) => {
+    const tracks = data.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+    if (tracks?.length) return tracks.find((t: any) => t.languageCode === "en") || tracks[0];
+    return null;
+  };
+
+  const fetchCaptionData = async (baseUrl: string) => {
+    const res = await fetch(baseUrl + "&fmt=json3");
+    const data = await res.json();
+    return data.events?.filter((e: any) => e.segs).map((e: any) => ({
+      text: e.segs.map((s: any) => s.utf8).join(""),
+      offset: e.tStartMs
+    }));
+  };
+
+  // Strategy 1: Innertube Android (Direct)
   try {
     const res = await fetch("https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2Sl_Y6G397J8u5kY37rJ3S5c6G8", {
       method: "POST",
@@ -73,55 +89,47 @@ async function tryFetchTranscript(vId: string): Promise<TranscriptItem[] | null>
       }),
       headers: { "Content-Type": "application/json" }
     });
-    const data = await res.json();
-    const tracks = data.captions?.playerCaptionsTracklistRenderer?.captionTracks;
-    if (tracks?.length) {
-      const track = tracks.find((t: any) => t.languageCode === "en") || tracks[0];
-      const captionData = await (await fetch(track.baseUrl + "&fmt=json3")).json();
-      return captionData.events?.filter((e: any) => e.segs).map((e: any) => ({
-        text: e.segs.map((s: any) => s.utf8).join(""),
-        offset: e.tStartMs
-      }));
-    }
+    const track = extractFromPlayerResponse(await res.json());
+    if (track) return await fetchCaptionData(track.baseUrl);
   } catch (e) {}
 
-  // Strategy 2: YouTubei (Innertube) API - TVHTML5 Client (Often less restricted)
+  // Strategy 2: Innertube MWEB (Mobile Web - Often works on cloud IPs)
   try {
     const res = await fetch("https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2Sl_Y6G397J8u5kY37rJ3S5c6G8", {
       method: "POST",
       body: JSON.stringify({
         videoId: vId,
-        context: { client: { clientName: "TVHTML5", clientVersion: "7.20230405.08.01", hl: "en", gl: "US" } }
+        context: { client: { clientName: "MWEB", clientVersion: "2.20230405.08.01", hl: "en", gl: "US" } }
       }),
       headers: { "Content-Type": "application/json" }
     });
-    const data = await res.json();
-    const tracks = data.captions?.playerCaptionsTracklistRenderer?.captionTracks;
-    if (tracks?.length) {
-      const track = tracks.find((t: any) => t.languageCode === "en") || tracks[0];
-      const captionData = await (await fetch(track.baseUrl + "&fmt=json3")).json();
-      return captionData.events?.filter((e: any) => e.segs).map((e: any) => ({
-        text: e.segs.map((s: any) => s.utf8).join(""),
-        offset: e.tStartMs
-      }));
-    }
+    const track = extractFromPlayerResponse(await res.json());
+    if (track) return await fetchCaptionData(track.baseUrl);
   } catch (e) {}
 
-  // Strategy 3: LemnosLife Public Proxy (High Success Rate)
-  try {
-    const res = await fetch(`https://yt.lemnoslife.com/noKey/captions?videoId=${vId}`);
-    const data = await res.json();
-    const track = data.captionTracks?.find((t: any) => t.languageCode === "en") || data.captionTracks?.[0];
-    if (track?.baseUrl) {
-      const captionData = await (await fetch(track.baseUrl + "&fmt=json3")).json();
-      return captionData.events?.filter((e: any) => e.segs).map((e: any) => ({
-        text: e.segs.map((s: any) => s.utf8).join(""),
-        offset: e.tStartMs
-      }));
-    }
-  } catch (e) {}
+  // Strategy 3: CORS Proxy Rotator (Mimics residential-like behavior)
+  const proxies = [
+    `https://api.allorigins.win/raw?url=`,
+    `https://api.codetabs.com/v1/proxy?quest=`,
+  ];
+  
+  for (const proxy of proxies) {
+    try {
+      const targetUrl = encodeURIComponent(`https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2Sl_Y6G397J8u5kY37rJ3S5c6G8`);
+      const res = await fetch(`${proxy}${targetUrl}`, {
+        method: "POST",
+        body: JSON.stringify({
+          videoId: vId,
+          context: { client: { clientName: "ANDROID", clientVersion: "17.31.35", hl: "en" } }
+        }),
+        headers: { "Content-Type": "application/json" }
+      });
+      const track = extractFromPlayerResponse(await res.json());
+      if (track) return await fetchCaptionData(track.baseUrl);
+    } catch (e) {}
+  }
 
-  // Strategy 4: Invidious Rotator
+  // Strategy 4: Invidious Rotator (External nodes)
   const instances = ["https://inv.tux.rs", "https://yewtu.be", "https://invidious.snopyta.org", "https://vid.puffyan.us"];
   for (const inst of instances.sort(() => Math.random() - 0.5)) {
     try {
@@ -143,20 +151,17 @@ async function tryFetchTranscript(vId: string): Promise<TranscriptItem[] | null>
 
 export async function POST(req: NextRequest) {
   try {
-    const { url, apiKey, model = "meta-llama/llama-3.3-70b-instruct:free", tone = "Hinglish", manualTranscript } = await req.json();
-    
-    let fullTranscript = manualTranscript || "";
+    const { url, apiKey, model = "meta-llama/llama-3.3-70b-instruct:free", tone = "Hinglish" } = await req.json();
     const videoId = extractVideoId(url?.trim());
 
-    if (!fullTranscript) {
-      if (!videoId) return NextResponse.json({ error: "Invalid YouTube URL" }, { status: 400 });
-      const items = await tryFetchTranscript(videoId);
-      if (!items?.length) return NextResponse.json({ 
-        error: "YouTube is blocking automated requests from Vercel.",
-        isBlockError: true 
-      }, { status: 422 });
-      fullTranscript = items.map((i: TranscriptItem) => i.text).join(" ").replace(/\s+/g, " ");
+    if (!videoId) return NextResponse.json({ error: "Invalid YouTube URL" }, { status: 400 });
+    
+    const items = await tryFetchTranscript(videoId);
+    if (!items?.length) {
+      return NextResponse.json({ error: "YouTube is temporarily blocking this request. Please try again in a few minutes or try a different video." }, { status: 422 });
     }
+
+    const fullTranscript = items.map((i: TranscriptItem) => i.text).join(" ").replace(/\s+/g, " ");
     
     // OpenRouter Only
     const prompt = `You are an AI Content Repurposer. Convert this transcript into structured Hinglish content (Summary, Notes, 3 Reels Scripts, 10 Hooks, 5 Titles, 3 Captions, Tags). 

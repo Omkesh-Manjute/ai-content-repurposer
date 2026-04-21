@@ -38,7 +38,6 @@ export default function HomePage() {
   const [appState, setAppState] = useState<AppState>("idle");
   const [content, setContent] = useState<GeneratedContent | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
-  const [isBlockError, setIsBlockError] = useState(false);
   const [processingStep, setProcessingStep] = useState(0);
   // Login modal states
   const [showLoginModal, setShowLoginModal] = useState(false);
@@ -48,10 +47,9 @@ export default function HomePage() {
 
   const outputRef = useRef<HTMLDivElement>(null);
 
-  const handleGenerate = async (url: string, apiKey: string, provider: ProviderId, model: string, tone: string, manualTranscript?: string) => {
+  const handleGenerate = async (url: string, apiKey: string, provider: ProviderId, model: string, tone: string) => {
     setAppState("processing");
     setErrorMessage("");
-    setIsBlockError(false);
     setProcessingStep(1);
 
     try {
@@ -65,7 +63,7 @@ export default function HomePage() {
       const response = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url, apiKey, provider, model, tone, manualTranscript }),
+        body: JSON.stringify({ url, apiKey, provider, model, tone }),
         signal: controller.signal
       });
       clearTimeout(timeoutId);
@@ -74,7 +72,6 @@ export default function HomePage() {
       const data = await response.json();
 
       if (!response.ok) {
-        if (data.isBlockError) setIsBlockError(true);
         throw new Error(data.error || "Something went wrong. Please try again.");
       }
 
@@ -176,7 +173,6 @@ export default function HomePage() {
                     onGenerate={handleGenerate}
                     errorMessage={errorMessage}
                     isError={appState === "error"}
-                    isBlockError={isBlockError}
                   />
                 </div>
               )}
