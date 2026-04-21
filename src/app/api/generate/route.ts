@@ -10,28 +10,26 @@ interface TranscriptItem {
 
 // ─── Helpers ──────────────────────────────────────────
 function extractVideoId(url: string): string | null {
+  if (!url) return null;
+  const decodedUrl = decodeURIComponent(url);
   const patterns = [
-    /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/?|youtube\.com\/v\/|youtube\.com\/shorts\/)([^&\n?#]+)/,
-    /^([a-zA-Z0-9_-]{11})$/,
+    /(?:v=|v\/|vi\/|shorts\/|embed\/|youtu.be\/|youtube.com\/user\/[^#]*#([^\/]*?\/)*)\??(?:v=)?([a-zA-Z0-9_-]{11})/,
+    /[a-zA-Z0-9_-]{11}/
   ];
   for (const pattern of patterns) {
-    const match = url.match(pattern);
-    if (match) return match[1];
+    const match = decodedUrl.match(pattern);
+    if (match) {
+      const id = match[2] || match[0];
+      if (id.length === 11) return id;
+    }
   }
   return null;
 }
 
 function parseAIResponse(raw: string) {
   const sections: Record<string, string> = { 
-    summary: "", 
-    notes: "", 
-    reels: "", 
-    hooks: "", 
-    titles: "", 
-    captions: "", 
-    keywords: "" 
+    summary: "", notes: "", reels: "", hooks: "", titles: "", captions: "", keywords: "" 
   };
-  
   const lines = raw.split("\n");
   let currentKey: keyof typeof sections | null = null;
 
@@ -44,7 +42,7 @@ function parseAIResponse(raw: string) {
       currentKey = "summary"; continue;
     } else if (/NOTES|नोट्स/i.test(upper) && (trimmed.includes("🧠") || trimmed.includes("2."))) {
       currentKey = "notes"; continue;
-    } else if (/REELS|SHORTS|SCRIPT|रील्स/i.test(upper) && (trimmed.includes("🎯") || trimmed.includes("3."))) {
+    } else if (/REELS|SHORTS|रील्स/i.test(upper) && (trimmed.includes("🎯") || trimmed.includes("3."))) {
       currentKey = "reels"; continue;
     } else if (/HOOKS|हुक्स/i.test(upper) && (trimmed.includes("🔥") || trimmed.includes("4."))) {
       currentKey = "hooks"; continue;
@@ -55,23 +53,21 @@ function parseAIResponse(raw: string) {
     } else if (/KEYWORDS|TAGS|कीवर्ड/i.test(upper) && (trimmed.includes("🔑") || trimmed.includes("7."))) {
       currentKey = "keywords"; continue;
     }
-    
     if (currentKey) sections[currentKey] += line + "\n";
   }
 
-  const reelScripts = sections.reels.split(/VERSION\s*\d+|वर्जन\s*\d+/i)
-    .filter(s => s.trim().length > 20)
-    .map(s => {
-      const hook = s.match(/Hook:?\s*(.*?)(?=\s*(?:Main|Content|Body|Ending|CTA|$)|\n)/is)?.[1]?.trim() || "";
-      const content = s.match(/(?:Main|Content|Body):?\s*(.*?)(?=\s*(?:Ending|CTA|$)|\n)/is)?.[1]?.trim() || "";
-      const cta = s.match(/(?:Ending|CTA):?\s*(.*?)(?=$|\n)/is)?.[1]?.trim() || "";
-      return { hook, content, cta };
-    });
+  const reelScripts = sections.reels.split(/VERSION|वर्जन/i)
+    .filter(s => s.trim().length > 10)
+    .map(s => ({
+      hook: s.match(/Hook:?\s*(.*?)(?=\s*Main|Ending|CTA|\n|$)/is)?.[1]?.trim() || "",
+      content: s.match(/Main:?\s*(.*?)(?=\s*Ending|CTA|\n|$)/is)?.[1]?.trim() || "",
+      cta: s.match(/Ending:?\s*(.*?)(?=\n|$)/is)?.[1]?.trim() || ""
+    }));
 
   return {
     summary: sections.summary.trim(),
     notes: sections.notes.trim(),
-    reelScripts: reelScripts.length ? reelScripts : [{ hook: "Catchy Hook", content: sections.reels.trim(), cta: "Follow for more" }],
+    reelScripts,
     viralHooks: sections.hooks.trim().split("\n").filter(l => l.length > 5).slice(0, 10),
     titles: sections.titles.trim().split("\n").filter(l => l.length > 5).slice(0, 5),
     captions: sections.captions.trim().split("\n\n").filter(l => l.length > 10).slice(0, 3),
@@ -79,113 +75,113 @@ function parseAIResponse(raw: string) {
   };
 }
 
-function buildPrompt(transcript: string, tone: string): string {
-  return `You are an AI Content Repurposer.
+async function tryFetchTranscript(vId: string): Promise<TranscriptItem[] | null> {
+  console.log(`Attempting transcript for: ${vId}`);
+  
+  // Strategy 1: youtube-transcript package
+  try {
+    const res = await YoutubeTranscript.fetchTranscript(vId);
+    if (res?.length) return res;
+  } catch (e) { console.log("Strategy 1 failed"); }
 
-INPUT:
-YouTube video transcript: "${transcript}"
+  // Strategy 2: Direct InnerTube (Desktop) - simulating a browser session
+  try {
+    const res = await fetch(`https://www.youtube.com/watch?v=${vId}`, {
+      headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36" }
+    });
+    const html = await res.text();
+    const match = html.match(/"captionTracks":\s*(\[.*?\])/);
+    if (match) {
+      const tracks = JSON.parse(match[1]);
+      const track = tracks.find((t: any) => t.languageCode === 'en' || t.languageCode === 'hi') || tracks[0];
+      if (track?.baseUrl) {
+        const trRes = await fetch(track.baseUrl + "&fmt=json3");
+        const trData = await trRes.json() as any;
+        return trData.events?.filter((e: any) => e.segs).map((e: any) => ({
+          text: e.segs.map((s: any) => s.utf8).join(""),
+          offset: e.tStartMs
+        }));
+      }
+    }
+  } catch (e) { console.log("Strategy 2 failed"); }
 
-YOUR TASK:
-Convert the transcript into structured, high-quality content in a "${tone}" tone.
+  // Strategy 3: Multi-Service Fallback (Piped + Invidious)
+  const services = [
+    `https://api.piped.asia/streams/${vId}`,
+    `https://pipedapi.kavin.rocks/streams/${vId}`,
+    `https://yewtu.be/api/v1/videos/${vId}?fields=captions`,
+    `https://inv.tux.rs/api/v1/videos/${vId}?fields=captions`
+  ];
 
-OUTPUT FORMAT:
-
-1. 📌 SHORT SUMMARY (5–6 lines)
-2. 🧠 DETAILED NOTES
-3. 🎯 REELS / SHORTS SCRIPT (3 versions)
-Each MUST include: VERSION, Hook, Main, Ending.
-4. 🔥 VIRAL HOOKS (10)
-5. 🏷️ TITLES (5)
-6. 📢 CAPTIONS (3)
-7. 🔑 KEYWORDS / TAGS
-
-STYLE: Hinglish, Simple, High engagement, No fluff. No mentions of "transcript".`;
-}
-
-async function callOpenAICompat(apiKey: string, model: string, prompt: string, baseUrl: string): Promise<string> {
-  const res = await fetch(`${baseUrl}/chat/completions`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({ model, messages: [{ role: "system", content: "You are a content creator." }, { role: "user", content: prompt }] }),
-  });
-  const data = await res.json() as any;
-  if (data.error) throw new Error(data.error.message);
-  return data.choices?.[0]?.message?.content || "";
-}
-
-async function generateWithProvider(providerId: ProviderId, apiKey: string, model: string, prompt: string): Promise<string> {
-  if (providerId === "gemini") {
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const result = await genAI.getGenerativeModel({ model }).generateContent(prompt);
-    return result.response.text();
+  for (const url of services) {
+    try {
+      const res = await fetch(url, { next: { revalidate: 0 } });
+      const data = await res.json() as any;
+      
+      // Piped format
+      if (data.subtitles) {
+        const sub = data.subtitles.find((s: any) => s.code.startsWith('en')) || data.subtitles[0];
+        if (sub?.url) {
+          const vtt = await (await fetch(sub.url)).text();
+          return vtt.split("\n\n").slice(1).map(b => ({ text: b.split("\n").slice(1).join(" "), offset: 0 }));
+        }
+      }
+      // Invidious format
+      if (data.captions) {
+        const cap = data.captions.find((c: any) => c.label.includes("English")) || data.captions[0];
+        if (cap?.url) {
+          const baseUrl = new URL(url).origin;
+          const vtt = await (await fetch(baseUrl + cap.url)).text();
+          return vtt.split("\n\n").slice(1).map(b => ({ text: b.split("\n").slice(1).join(" "), offset: 0 }));
+        }
+      }
+    } catch (e) { continue; }
   }
-  const baseUrl = providerId === "openai" ? "https://api.openai.com/v1" : providerId === "groq" ? "https://api.groq.com/openai/v1" : "https://openrouter.ai/api/v1";
-  return callOpenAICompat(apiKey, model, prompt, baseUrl);
+
+  return null;
 }
 
-// ─── Main Route Handler ───────────────────────────────
 export async function POST(req: NextRequest) {
   try {
     const { url, apiKey, provider = "openai", model = "gpt-4o", tone = "Hinglish", useAI = true } = await req.json();
     const videoId = extractVideoId(url?.trim());
-    if (!videoId) return NextResponse.json({ error: "Invalid YouTube URL" }, { status: 400 });
-
-    async function tryFetchTranscript(vId: string): Promise<TranscriptItem[] | null> {
-      // 1. youtube-transcript (Standard)
-      try {
-        const res = await YoutubeTranscript.fetchTranscript(vId);
-        if (res?.length) return res;
-      } catch {}
-
-      // 2. HTML Scrape (Browser impersonation)
-      try {
-        const pageRes = await fetch(`https://www.youtube.com/watch?v=${vId}`, {
-          headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/121.0.0.0" }
-        });
-        const html = await pageRes.text();
-        const captionsMatch = html.match(/"captionTracks":\s*(\[.*?\])/);
-        if (captionsMatch) {
-          const tracks = JSON.parse(captionsMatch[1]);
-          const track = tracks.find((t: any) => t.languageCode === "en") || tracks[0];
-          if (track?.baseUrl) {
-            const transcriptRaw = await (await fetch(track.baseUrl + "&fmt=json3")).json() as any;
-            return transcriptRaw.events?.filter((e: any) => e.segs).map((e: any) => ({
-              text: e.segs.map((s: any) => s.utf8).join(""),
-              offset: e.tStartMs
-            }));
-          }
-        }
-      } catch {}
-
-      // 3. Invidious API (Very resilient to blocking)
-      const invidiousInstances = ["https://yewtu.be", "https://inv.tux.rs", "https://invidious.snopyta.org"];
-      for (const inst of invidiousInstances) {
-        try {
-          const data = await (await fetch(`${inst}/api/v1/videos/${vId}?fields=captions`)).json() as any;
-          const cap = data.captions?.find((c: any) => c.label.includes("English")) || data.captions?.[0];
-          if (cap?.url) {
-            const vtt = await (await fetch(`${inst}${cap.url}`)).text();
-            return vtt.split("\n\n").slice(1).map(b => ({ text: b.split("\n").slice(1).join(" "), offset: 0 }));
-          }
-        } catch {}
-      }
-      return null;
-    }
+    
+    if (!videoId) return NextResponse.json({ error: "Invalid YouTube URL. Please check the video link." }, { status: 400 });
 
     const items = await tryFetchTranscript(videoId);
-    if (!items?.length) return NextResponse.json({ error: "Could not extract transcript. YouTube is blocking the request." }, { status: 422 });
+    if (!items?.length) {
+      return NextResponse.json({ error: "YouTube is blocking our requests. This happens sometimes with Vercel IPs. Please try again in 5 minutes or use a different video." }, { status: 422 });
+    }
 
     const fullTranscript = items.map((i: TranscriptItem) => i.text).join(" ").replace(/\s+/g, " ");
 
-    if (!useAI || !apiKey) return NextResponse.json({ transcript: fullTranscript, videoId });
+    if (!useAI || !apiKey) {
+      return NextResponse.json({ transcript: fullTranscript, videoId });
+    }
 
-    const prompt = buildPrompt(fullTranscript.slice(0, 10000), tone);
-    const rawAiResponse = await generateWithProvider(provider as ProviderId, apiKey, model, prompt);
-    const parsed = parseAIResponse(rawAiResponse);
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const prompt = `Convert this transcript to Hinglish summary, notes, 3 reel scripts, 10 hooks, 5 titles, 3 captions, and tags. 
+Transcript: ${fullTranscript.slice(0, 10000)}`;
 
+    let responseText = "";
+    if (provider === "gemini") {
+      const result = await genAI.getGenerativeModel({ model }).generateContent(prompt);
+      responseText = result.response.text();
+    } else {
+      const baseUrl = provider === "openai" ? "https://api.openai.com/v1" : "https://openrouter.ai/api/v1";
+      const res = await fetch(`${baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({ model, messages: [{ role: "user", content: prompt }] }),
+      });
+      const data = await res.json() as any;
+      responseText = data.choices?.[0]?.message?.content || "";
+    }
+
+    const parsed = parseAIResponse(responseText);
     return NextResponse.json({ ...parsed, videoId });
 
   } catch (err: any) {
-    return NextResponse.json({ error: err.message || "Server Error" }, { status: 500 });
+    return NextResponse.json({ error: err.message || "Internal Server Error" }, { status: 500 });
   }
 }
