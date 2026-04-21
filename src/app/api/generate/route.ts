@@ -335,7 +335,7 @@ export async function POST(req: NextRequest) {
     console.log("Starting transcript extraction for video:", videoId);
 
     async function tryFetchTranscript(vId: string) {
-      // Strategy 1: youtube-transcript package with a slightly different approach
+      // --- Strategy 1: youtube-transcript package ---
       try {
         console.log("Attempting Strategy 1: youtube-transcript...");
         const result = await Promise.race([
@@ -347,19 +347,27 @@ export async function POST(req: NextRequest) {
         console.warn("Strategy 1 failed:", e instanceof Error ? e.message : e);
       }
 
-      // Strategy 2: Manual fetch with different Client ID if Strategy 1 fails
-      // We attempt to fetch via the mobile player parameters which are often less restricted
+      // --- Strategy 2: Manual InnerTube Fetch (IOS Client - More Resilient) ---
       try {
-        console.log("Attempting Strategy 2: Manual InnerTube Fetch...");
-        const response = await fetch("https://www.youtube.com/youtubei/v1/player?prettyPrint=false", {
+        console.log("Attempting Strategy 2: Manual InnerTube (IOS)...");
+        const response = await fetch("https://www.youtube.com/youtubei/v1/player", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0 (Android 14; Mobile; rv:128.0) Gecko/128.0 Firefox/128.0"
+            "User-Agent": "com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X; en_US)"
           },
           body: JSON.stringify({
             context: {
-              client: { clientName: "ANDROID", clientVersion: "19.30.36" }
+              client: {
+                clientName: "IOS",
+                clientVersion: "19.29.1",
+                deviceModel: "iPhone16,2",
+                osName: "iOS",
+                osVersion: "17.5.1.21F90",
+                hl: "en",
+                gl: "US",
+                utcOffsetMinutes: 0
+              }
             },
             videoId: vId
           })
@@ -374,9 +382,9 @@ export async function POST(req: NextRequest) {
             const transcriptData = await transcriptRes.json();
             if (transcriptData?.events) {
               return transcriptData.events
-                .filter((e: any) => e.segs)
+                .filter((e: any) => e.segs && e.segs.length > 0)
                 .map((e: any) => ({
-                  text: e.segs.map((s: any) => s.utf8).join(" "),
+                  text: e.segs.map((s: any) => s.utf8).join(""),
                   offset: e.tStartMs,
                   duration: e.dDurationMs
                 }));
@@ -385,6 +393,44 @@ export async function POST(req: NextRequest) {
         }
       } catch (e) {
         console.warn("Strategy 2 failed:", e instanceof Error ? e.message : e);
+      }
+
+      // --- Strategy 3: Piped API Fallback (Public Proxies) ---
+      const pipedInstances = [
+        "https://pipedapi.kavin.rocks",
+        "https://pipedapi.adminforge.de",
+        "https://api.piped.asia",
+        "https://pipedapi.smnz.de"
+      ];
+
+      for (const instance of pipedInstances) {
+        try {
+          console.log(`Attempting Strategy 3: Piped Instance (${new URL(instance).hostname})...`);
+          const res = await fetch(`${instance}/streams/${vId}`);
+          if (res.ok) {
+            const data = await res.json();
+            const captionTrack = data.subtitles?.find((s: any) => s.code === "en" || s.code.startsWith("en-")) || data.subtitles?.[0];
+            
+            if (captionTrack?.url) {
+              const subRes = await fetch(captionTrack.url);
+              const subText = await subRes.text();
+              
+              // Simple VTT/SRT parser for Piped output
+              if (subText.includes("WEBVTT")) {
+                const lines = subText.split("\n\n").slice(1);
+                return lines.map(block => {
+                  const parts = block.split("\n");
+                  if (parts.length >= 2) {
+                    return { text: parts.slice(1).join(" ").trim(), offset: 0 }; // Simplified
+                  }
+                  return null;
+                }).filter(Boolean);
+              }
+            }
+          }
+        } catch (e) {
+          console.warn(`Piped instance ${instance} failed.`);
+        }
       }
 
       return null;
