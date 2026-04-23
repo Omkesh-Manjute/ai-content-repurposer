@@ -64,7 +64,7 @@ export default function HomePage() {
       if (!currentTranscript) {
         setProcessingStep(2); // "Extracting Transcript"
         try {
-          const transData = await generateContent(url);
+          const transData = await generateContent(url) as any;
           if (transData && transData.transcript) {
             currentTranscript = Array.isArray(transData.transcript) 
               ? transData.transcript.map((t: any) => t?.text || "").join(" ")
