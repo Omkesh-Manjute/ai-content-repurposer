@@ -1,36 +1,44 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Collega - AI Content Repurposer 🧠🎬
 
-## Getting Started
+Collega is a powerful tool that transforms YouTube videos into structured notes, social media captions, and viral reel scripts using AI.
 
-First, run the development server:
+## 🚀 Key Features
+- **Smart Summarization:** Get structured notes from any long video.
+- **Content Creation:** Automatically generate Reel scripts and captions.
+- **Hinglish Support:** Generate content in native Hinglish/Hindi tones.
+- **Robust Extraction:** Uses a dedicated Python backend to bypass YouTube's IP blocks.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+## 🛠️ Tech Stack
+- **Frontend:** Next.js 15, React, Tailwind CSS, Framer Motion
+- **AI Backend:** OpenRouter (Llama 3.3 70B)
+- **Scraper Backend:** Python (FastAPI), Hosted on Render
+- **Hosting:** Vercel (Frontend), Render (Scraper)
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## 🏗️ Architecture
+1. **User** enters a YouTube URL in the Next.js UI.
+2. **Next.js** calls the **Python Scraper (Render)** to fetch the transcript.
+3. **Python Scraper** returns the transcript text.
+4. **Next.js** sends the transcript + prompt to **OpenRouter AI**.
+5. **AI** returns structured content displayed to the user.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## 📦 Installation & Setup
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### 1. Python Scraper (Render)
+1. Deploy the `python-backend` folder to Render.com.
+2. Build Command: `pip install -r requirements.txt`
+3. Start Command: `gunicorn -w 4 -k uvicorn.workers.UvicornWorker main:app`
 
-## Learn More
+### 2. Next.js App (Vercel)
+1. Set up your `.env` file:
+   ```env
+   OPENROUTER_API_KEY=your_key_here
+   PYTHON_BACKEND_URL=your_render_url_here
+   ```
+2. Run locally:
+   ```bash
+   npm install
+   npm run dev
+   ```
 
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## 📄 License
+MIT License

@@ -75,22 +75,16 @@ Scalable architecture
 Simple UI/UX
 Mobile responsive
 Secure API usage
-🛠️ TECH STACK (Antigravity Friendly)
-🔹 Frontend
-React.js / Next.js (recommended)
-Tailwind CSS (UI design)
-ShadCN UI (modern components)
-🔹 Backend
-Node.js (Express) OR Python (FastAPI)
-🔹 AI Layer
-OpenAI (GPT APIs)
-Alternative:
-Gemini API (Google)
-Claude API
-🔹 Transcript Extraction
-YouTube Transcript API (youtube-transcript-api)
-OR:
-Whisper API (for speech-to-text)
+🛠️ TECH STACK (Final Production Architecture)
+🔹 Frontend & Orchestration (Vercel)
+- Next.js 15 (App Router)
+- Tailwind CSS & Framer Motion
+- OpenRouter API (Llama 3.3 70B)
+
+🔹 Scraper Service (Render)
+- Python 3.10 (FastAPI)
+- youtube-transcript-api & yt-dlp
+- Gunicorn (Production Server)
 
 Prompt Example (Notes)
 Summarize this transcript into structured notes with headings and bullet points:
