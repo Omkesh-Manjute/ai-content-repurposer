@@ -135,7 +135,7 @@ export async function POST(req: NextRequest) {
     let fullTranscript = transcript;
     
     if (!fullTranscript) {
-      const items = await tryFetchTranscript(videoId);
+      const items = await tryFetchTranscript(videoId!);
       if (!items?.length) {
         return NextResponse.json({ 
           error: "YouTube is blocking our server. Trying secondary extraction...", 
