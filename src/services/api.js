@@ -1,6 +1,13 @@
 // src/services/api.js
 const BASE_URL = 'https://ai-content-repurposer-production-1b9a.up.railway.app';
 
+function extractVideoId(url) {
+  const match = url.match(
+    /(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&\n?#]+)/
+  );
+  return match ? match[1] : null;
+}
+
 /**
  * Generate summarized content from a YouTube URL
  * @param {string} url - The YouTube Video URL
@@ -8,24 +15,30 @@ const BASE_URL = 'https://ai-content-repurposer-production-1b9a.up.railway.app';
  */
 export const generateContent = async (url) => {
   try {
-    const response = await fetch(`/api/generate`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ url }),
-    });
+    const videoId = extractVideoId(url);
+
+    if (!videoId) {
+      throw new Error("Invalid YouTube URL");
+    }
+
+    const response = await fetch(
+      `${BASE_URL}/transcript/${videoId}`
+    );
 
     if (!response.ok) {
-      // Trying to parse standard error message if provided by backend
-      const errorData = await response.json().catch(() => null);
-      throw new Error(errorData?.message || `Error: ${response.status} ${response.statusText}`);
+      throw new Error(`Error: ${response.status}`);
     }
 
     const data = await response.json();
+    
+    if (!data || !data.transcript) {
+      throw new Error("No transcript found");
+    }
+
     return data;
+
   } catch (error) {
-    console.error('API Error:', error);
+    console.error("API Error:", error);
     throw error;
   }
 };

@@ -141,9 +141,9 @@ export async function POST(req: NextRequest) {
       const items = await tryFetchTranscript(videoId!);
       if (!items?.length) {
         return NextResponse.json({ 
-          error: "YouTube is blocking our server. Trying secondary extraction...", 
+          error: "Transcript not available (video blocked or no captions)", 
           isBlockError: true 
-        }, { status: 422 });
+        }, { status: 403 });
       }
       fullTranscript = items.map((i: TranscriptItem) => i.text).join(" ").replace(/\s+/g, " ");
     }
