@@ -1,11 +1,59 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from youtube_transcript_api import YouTubeTranscriptApi
 import subprocess
 import json
 import os
 import httpx
 import random
 import uvicorn
+import re
+
+def clean_vtt_transcript(vtt_text):
+    # 🕵️ Detect if it's JSON (YouTube JSON3 format)
+    if vtt_text.strip().startswith('{'):
+        try:
+            data = json.loads(vtt_text)
+            cleaned = []
+            if "events" in data:
+                for event in data["events"]:
+                    if "segs" in event:
+                        t = "".join([s.get("utf8", "") for s in event["segs"]]).strip()
+                        if t: cleaned.append(t)
+            
+            full_text = " ".join(cleaned)
+            full_text = re.sub(r"\s+", " ", full_text)
+            return [{"text": full_text, "offset": 0}]
+        except:
+            pass # Fallback to VTT parsing if JSON fails
+
+    # 📝 Standard VTT parsing (User's logic)
+    lines = vtt_text.split("\n")
+    cleaned = []
+
+    for line in lines:
+        line = line.strip()
+
+        if (
+            not line
+            or "-->" in line
+            or "WEBVTT" in line
+            or line.isdigit()
+            or "align:" in line
+        ):
+            continue
+
+        # remove html tags
+        line = re.sub(r"<.*?>", "", line)
+
+        cleaned.append(line)
+
+    full_text = " ".join(cleaned)
+
+    # extra cleaning
+    full_text = re.sub(r"\s+", " ", full_text)
+
+    return [{"text": full_text, "offset": 0}]
 
 app = FastAPI()
 
@@ -23,15 +71,17 @@ USER_AGENTS = [
     "Mozilla/5.0 (X11; Linux x86_64) Chrome/118.0.0.0"
 ]
 
+
 @app.get("/")
 def home():
     return {"status": "ok", "msg": "Backend Running 🚀"}
+
 
 # 🧠 STRATEGY 1 — yt-dlp (MOST RELIABLE)
 def get_transcript_ytdlp(video_id: str):
     try:
         cmd = [
-            "yt-dlp",
+            "python", "-m", "yt_dlp",
             "--write-auto-sub",
             "--sub-lang", "en",
             "--skip-download",
@@ -57,22 +107,15 @@ def get_transcript_ytdlp(video_id: str):
         import requests
         r = requests.get(sub_url, headers={"User-Agent": random.choice(USER_AGENTS)})
 
-        if not r.ok:
-            return None
+        if r.ok:
+            return clean_vtt_transcript(r.text)
 
-        transcript = []
-        for line in r.text.split("\n"):
-            if line.strip() and "-->" not in line and "WEBVTT" not in line:
-                transcript.append({
-                    "text": line.strip(),
-                    "offset": 0
-                })
-
-        return transcript
+        return None
 
     except Exception as e:
         print("yt-dlp error:", e)
         return None
+
 
 # 🧠 STRATEGY 2 — PIPED (Fallback)
 async def fetch_transcript_piped(video_id: str):
@@ -100,34 +143,32 @@ async def fetch_transcript_piped(video_id: str):
                     continue
 
                 vtt = await client.get(sub_url)
-                lines = vtt.text.split("\n")
-
-                transcript = []
-                for line in lines:
-                    if line.strip() and "-->" not in line and "WEBVTT" not in line:
-                        transcript.append({
-                            "text": line.strip(),
-                            "offset": 0
-                        })
-
-                if transcript:
-                    return transcript
+                
+                if vtt.status_code == 200:
+                    return clean_vtt_transcript(vtt.text)
 
             except:
                 continue
 
     return None
 
+
 # 🧠 MAIN API
 @app.get("/transcript/{video_id}")
 async def get_transcript(video_id: str):
+    # ✅ Step 1 — youtube-transcript-api (Fastest & Standard)
+    try:
+        transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=['en', 'hi', 'en-GB'])
+        return {"transcript": [{"text": t['text'], "offset": int(t['start']*1000)} for t in transcript], "source": "library"}
+    except:
+        pass
 
-    # ✅ Step 1 — yt-dlp
+    # ✅ Step 2 — yt-dlp (Most Reliable)
     data = get_transcript_ytdlp(video_id)
     if data:
         return {"transcript": data, "source": "yt-dlp"}
 
-    # ✅ Step 2 — piped fallback
+    # ✅ Step 3 — piped fallback
     data = await fetch_transcript_piped(video_id)
     if data:
         return {"transcript": data, "source": "piped"}
@@ -135,8 +176,9 @@ async def get_transcript(video_id: str):
     # ❌ FAIL
     raise HTTPException(
         status_code=404,
-        detail="Transcript not available (video blocked or no captions)"
+        detail="Transcript not available (YouTube is blocking us or no captions available)"
     )
+
 
 # 🚀 RUN
 if __name__ == "__main__":
