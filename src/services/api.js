@@ -1,5 +1,5 @@
 // src/services/api.js
-const BASE_URL = 'https://your-backend.onrender.com';
+const BASE_URL = 'https://ai-content-repurposer-production-1b9a.up.railway.app';
 
 /**
  * Generate summarized content from a YouTube URL
