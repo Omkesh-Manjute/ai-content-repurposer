@@ -2,10 +2,23 @@
 const BASE_URL = 'https://ai-content-repurposer-production-1b9a.up.railway.app';
 
 function extractVideoId(url) {
-  const match = url.match(
-    /(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&\n?#]+)/
-  );
-  return match ? match[1] : null;
+  try {
+    const u = new URL(url);
+
+    // youtube.com/watch?v=
+    if (u.hostname.includes("youtube.com")) {
+      return u.searchParams.get("v");
+    }
+
+    // youtu.be/
+    if (u.hostname.includes("youtu.be")) {
+      return u.pathname.slice(1);
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -32,7 +45,7 @@ export const generateContent = async (url) => {
     const data = await response.json();
     
     if (!data || !data.transcript) {
-      throw new Error("No transcript found");
+      throw new Error("Transcript not available");
     }
 
     return data;

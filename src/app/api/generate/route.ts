@@ -8,20 +8,14 @@ interface TranscriptItem {
 
 // ─── Helpers ──────────────────────────────────────────
 function extractVideoId(url: string): string | null {
-  if (!url) return null;
-  const decodedUrl = decodeURIComponent(url);
-  const patterns = [
-    /(?:v=|v\/|vi\/|shorts\/|embed\/|youtu.be\/|youtube.com\/user\/[^#]*#([^\/]*?\/)*)\??(?:v=)?([a-zA-Z0-9_-]{11})/,
-    /[a-zA-Z0-9_-]{11}/
-  ];
-  for (const pattern of patterns) {
-    const match = decodedUrl.match(pattern);
-    if (match) {
-      const id = match[2] || match[0];
-      if (id.length === 11) return id;
-    }
+  try {
+    const u = new URL(url);
+    if (u.hostname.includes("youtube.com")) return u.searchParams.get("v");
+    if (u.hostname.includes("youtu.be")) return u.pathname.slice(1);
+    return null;
+  } catch {
+    return null;
   }
-  return null;
 }
 
 function parseAIResponse(raw: string) {

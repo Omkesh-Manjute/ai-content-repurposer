@@ -352,13 +352,18 @@ export default function InputSection({ onGenerate, errorMessage, isError }: Inpu
     }
   };
 
-  // Proactive warm-up for Render backend
+  // Proactive warm-up for Railway backend
   useEffect(() => {
-    const videoId = url.match(/(?:v=|\/)([0-9A-Za-z_-]{11}).*/)?.[1];
-    const pythonUrl = process.env.NEXT_PUBLIC_PYTHON_BACKEND_URL || "https://ai-content-repurposer-production-1b9a.up.railway.app";
+    let vId = null;
+    try {
+      const u = new URL(url);
+      if (u.hostname.includes("youtube.com")) vId = u.searchParams.get("v");
+      else if (u.hostname.includes("youtu.be")) vId = u.pathname.slice(1);
+    } catch (e) {}
+
+    const pythonUrl = "https://ai-content-repurposer-production-1b9a.up.railway.app";
     
-    if (videoId && pythonUrl) {
-      // Ping the root or a health check to wake up Render early
+    if (vId && pythonUrl) {
       fetch(pythonUrl.replace(/\/$/, ""), { mode: 'no-cors' }).catch(() => {});
     }
   }, [url]);

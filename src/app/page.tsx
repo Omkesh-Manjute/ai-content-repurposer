@@ -8,6 +8,7 @@ import InputSection from "@/components/InputSection";
 import ProcessingSection from "@/components/ProcessingSection";
 import OutputSection from "@/components/OutputSection";
 import FeaturesSection from "@/components/FeaturesSection";
+import { generateContent } from "@/services/api";
 import type { ProviderId } from "@/lib/providers";
 
 export type GeneratedContent = {
@@ -57,71 +58,54 @@ export default function HomePage() {
     }
 
     try {
-      if (!transcript) {
-        await new Promise((r) => setTimeout(r, 400));
-        setProcessingStep(2);
+      // --- STEP 1: GET TRANSCRIPT (via Railway Backend) ---
+      let currentTranscript = transcript;
+      
+      if (!currentTranscript) {
+        setProcessingStep(2); // "Extracting Transcript"
+        try {
+          const transData = await generateContent(url);
+          if (transData && transData.transcript) {
+            currentTranscript = Array.isArray(transData.transcript) 
+              ? transData.transcript.map((t: any) => t?.text || "").join(" ")
+              : transData.transcript;
+          }
+        } catch (e: any) {
+          console.error("Transcript extraction failed:", e);
+          setErrorMessage(e.message || "Transcript not available");
+          setAppState("error");
+          return;
+        }
       }
 
+      if (!currentTranscript || currentTranscript.length < 10) {
+        setErrorMessage("Transcript not available");
+        setAppState("error");
+        return;
+      }
+
+      // --- STEP 2: GENERATE AI CONTENT (via Vercel AI Route) ---
+      setProcessingStep(4); // "AI Processing"
+      
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 min timeout
+      const timeoutId = setTimeout(() => controller.abort(), 120000);
 
       const response = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url, apiKey, provider, model, tone, transcript }),
+        body: JSON.stringify({ url, apiKey, provider, model, tone, transcript: currentTranscript }),
         signal: controller.signal
       });
+      
       clearTimeout(timeoutId);
-
-      setProcessingStep(3);
       const data = await response.json();
 
       if (!response.ok) {
-        if (data.isBlockError) {
-          const pythonUrl = "https://ai-content-repurposer-production-1b9a.up.railway.app";
-          const videoId = url.match(/(?:v=|\/)([0-9A-Za-z_-]{11}).*/)?.[1];
-          
-          if (pythonUrl && videoId) {
-            console.log("Attempting secondary extraction via:", pythonUrl);
-            setProcessingStep(3); // "Attempting Secondary Extraction"
-            try {
-              const directRes = await fetch(`${pythonUrl.replace(/\/$/, "")}/transcript/${videoId}`, {
-                method: 'GET',
-                mode: 'cors',
-                headers: { 'Accept': 'application/json' }
-              });
-              
-              if (directRes.ok) {
-                const directData = await directRes.json();
-                console.log("Secondary extraction result:", directData);
-                
-                if (directData && directData.transcript) {
-                  setProcessingStep(4); // "AI Processing"
-                  const fullTranscript = Array.isArray(directData.transcript) 
-                    ? directData.transcript.map((t: any) => t?.text || "").join(" ")
-                    : directData.transcript;
-                  
-                  if (!fullTranscript || fullTranscript.trim().length < 10) {
-                    throw new Error("Transcript content is too short or empty.");
-                  }
-                  
-                  return handleGenerate(url, apiKey, provider, model, tone, fullTranscript);
-                } else {
-                  throw new Error("Transcript not available on secondary server.");
-                }
-              } else {
-                console.error("Secondary server returned error:", directRes.status);
-                throw new Error(`Secondary server returned ${directRes.status}`);
-              }
-            } catch (e: any) {
-              console.error("Secondary server failed:", e);
-              setErrorMessage(e.message || "Transcript extraction failed. Please try another video.");
-              setAppState("error");
-              return;
-            }
-          }
-        }
-        throw new Error(data?.error || "Failed to process request.");
+        throw new Error(data?.error || "AI generation failed");
+      }
+
+      if (!data) {
+        throw new Error("No response from AI server");
       }
 
       setProcessingStep(4); // AI Processing
