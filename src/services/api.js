@@ -1,13 +1,21 @@
 // src/services/api.js
 const BASE_URL = 'https://ai-content-repurposer-production-1b9a.up.railway.app';
 
+function isValidYouTubeUrl(url) {
+  return /(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/|live\/)|youtu\.be\/)/.test(url);
+}
+
 function extractVideoId(url) {
   try {
     const u = new URL(url);
 
-    // youtube.com/watch?v=
+    // youtube.com (watch?v=, live/, shorts/, embed/)
     if (u.hostname.includes("youtube.com")) {
-      return u.searchParams.get("v");
+      const v = u.searchParams.get("v");
+      if (v) return v;
+      
+      const parts = u.pathname.split("/").filter(Boolean);
+      return parts.pop();
     }
 
     // youtu.be/

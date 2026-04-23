@@ -46,7 +46,7 @@ function loadRememberPref(): boolean {
 
 // ─── Utils ────────────────────────────────────────────
 function isValidYouTubeUrl(url: string): boolean {
-  return /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/shorts\/)/.test(url);
+  return /(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/|live\/)|youtu\.be\/)/.test(url);
 }
 
 interface InputSectionProps {
