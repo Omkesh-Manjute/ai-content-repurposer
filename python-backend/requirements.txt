@@ -1,8 +1,9 @@
 fastapi
-uvicorn
+uvicorn[standard]
 youtube-transcript-api
 yt-dlp
 httpx
 requests
 gunicorn
+
 
