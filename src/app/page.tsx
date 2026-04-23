@@ -82,20 +82,34 @@ export default function HomePage() {
           const videoId = url.match(/(?:v=|\/)([0-9A-Za-z_-]{11}).*/)?.[1];
           
           if (pythonUrl && videoId) {
+            console.log("Attempting secondary extraction via:", pythonUrl);
             setProcessingStep(3); // "Waking up Secondary Server"
             try {
-              // We don't use timeout here because Render can take up to 60s
-              const directRes = await fetch(`${pythonUrl.replace(/\/$/, "")}/transcript/${videoId}`);
+              const directRes = await fetch(`${pythonUrl.replace(/\/$/, "")}/transcript/${videoId}`, {
+                method: 'GET',
+                mode: 'cors',
+                headers: { 'Accept': 'application/json' }
+              });
+              
               if (directRes.ok) {
                 const directData = await directRes.json();
+                console.log("Secondary extraction successful!");
                 if (directData.transcript) {
                   setProcessingStep(4); // "AI Processing"
-                  return handleGenerate(url, apiKey, provider, model, tone, directData.transcript.map((t: any) => t.text).join(" "));
+                  const fullTranscript = Array.isArray(directData.transcript) 
+                    ? directData.transcript.map((t: any) => t.text).join(" ")
+                    : directData.transcript;
+                  return handleGenerate(url, apiKey, provider, model, tone, fullTranscript);
                 }
+              } else {
+                console.error("Secondary server returned error:", directRes.status);
+                throw new Error(`Secondary server error: ${directRes.status}`);
               }
-            } catch (e) {
+            } catch (e: any) {
               console.error("Secondary server failed:", e);
-              throw new Error("Secondary server is also blocked or sleeping. Please try again in 1 minute.");
+              setErrorMessage(`Secondary server failed: ${e.message || "Unknown error"}. Please check your connection.`);
+              setAppState("error");
+              return;
             }
           }
         }
