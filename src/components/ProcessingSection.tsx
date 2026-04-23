@@ -19,8 +19,8 @@ const STEPS = [
   },
   {
     icon: "🚀",
-    title: "Activating Secondary Server",
-    description: "YouTube blocked primary server. Waking up bypass engine...",
+    title: "Securing Content Access",
+    description: "Using optimized extraction engine for reliable data...",
   },
   {
     icon: "🤖",

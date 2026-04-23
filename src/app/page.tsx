@@ -78,12 +78,12 @@ export default function HomePage() {
 
       if (!response.ok) {
         if (data.isBlockError) {
-          const pythonUrl = process.env.NEXT_PUBLIC_PYTHON_BACKEND_URL || "https://ai-content-repurposer-production-1b9a.up.railway.app";
+          const pythonUrl = "https://ai-content-repurposer-production-1b9a.up.railway.app";
           const videoId = url.match(/(?:v=|\/)([0-9A-Za-z_-]{11}).*/)?.[1];
           
           if (pythonUrl && videoId) {
             console.log("Attempting secondary extraction via:", pythonUrl);
-            setProcessingStep(3); // "Waking up Secondary Server"
+            setProcessingStep(3); // "Attempting Secondary Extraction"
             try {
               const directRes = await fetch(`${pythonUrl.replace(/\/$/, "")}/transcript/${videoId}`, {
                 method: 'GET',
@@ -93,27 +93,35 @@ export default function HomePage() {
               
               if (directRes.ok) {
                 const directData = await directRes.json();
-                console.log("Secondary extraction successful!");
-                if (directData.transcript) {
+                console.log("Secondary extraction result:", directData);
+                
+                if (directData && directData.transcript) {
                   setProcessingStep(4); // "AI Processing"
                   const fullTranscript = Array.isArray(directData.transcript) 
-                    ? directData.transcript.map((t: any) => t.text).join(" ")
+                    ? directData.transcript.map((t: any) => t?.text || "").join(" ")
                     : directData.transcript;
+                  
+                  if (!fullTranscript || fullTranscript.trim().length < 10) {
+                    throw new Error("Transcript content is too short or empty.");
+                  }
+                  
                   return handleGenerate(url, apiKey, provider, model, tone, fullTranscript);
+                } else {
+                  throw new Error("Transcript not available on secondary server.");
                 }
               } else {
                 console.error("Secondary server returned error:", directRes.status);
-                throw new Error(`Secondary server error: ${directRes.status}`);
+                throw new Error(`Secondary server returned ${directRes.status}`);
               }
             } catch (e: any) {
               console.error("Secondary server failed:", e);
-              setErrorMessage(`Secondary server failed: ${e.message || "Unknown error"}. Please check your connection.`);
+              setErrorMessage(e.message || "Transcript extraction failed. Please try another video.");
               setAppState("error");
               return;
             }
           }
         }
-        throw new Error(data.error || "Something went wrong.");
+        throw new Error(data?.error || "Failed to process request.");
       }
 
       setProcessingStep(4); // AI Processing

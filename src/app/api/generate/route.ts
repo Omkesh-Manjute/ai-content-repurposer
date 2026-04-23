@@ -76,8 +76,11 @@ async function tryFetchTranscript(vId: string): Promise<TranscriptItem[] | null>
         });
         
         if (res.ok) {
-          const data = await res.json();
-          if (data.transcript) return data.transcript;
+          const data = await res.json().catch(() => null);
+          if (data && data.transcript) {
+            console.log("Successfully fetched transcript from Python backend.");
+            return data.transcript;
+          }
         }
       } catch (e) {
         console.error(`Attempt ${attempt} failed:`, e);
