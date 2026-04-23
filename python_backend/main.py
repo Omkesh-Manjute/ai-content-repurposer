@@ -80,14 +80,28 @@ def home():
 # 🧠 STRATEGY 1 — yt-dlp (MOST RELIABLE)
 def get_transcript_ytdlp(video_id: str):
     try:
+        # Load configs from ENV (Railway)
+        COOKIES_FILE = os.environ.get("YOUTUBE_COOKIES_PATH", "cookies.txt")
+        PROXY = os.environ.get("YOUTUBE_PROXY")
+
         cmd = [
             "python", "-m", "yt_dlp",
             "--write-auto-sub",
             "--sub-lang", "en",
             "--skip-download",
             "--print-json",
-            f"https://www.youtube.com/watch?v={video_id}"
+            "--user-agent", random.choice(USER_AGENTS)
         ]
+
+        if os.path.exists(COOKIES_FILE):
+            print(f"Using cookies from: {COOKIES_FILE}")
+            cmd.extend(["--cookies", COOKIES_FILE])
+        
+        if PROXY:
+            print("Using proxy for extraction")
+            cmd.extend(["--proxy", PROXY])
+
+        cmd.append(f"https://www.youtube.com/watch?v={video_id}")
 
         result = subprocess.run(cmd, capture_output=True, text=True)
 
