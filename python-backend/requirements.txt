@@ -3,4 +3,5 @@ uvicorn
 youtube-transcript-api
 yt-dlp
 httpx
+requests
 gunicorn

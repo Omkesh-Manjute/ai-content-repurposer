@@ -50,12 +50,17 @@ export default function HomePage() {
   const handleGenerate = async (url: string, apiKey: string, provider: ProviderId, model: string, tone: string, transcript?: string) => {
     setAppState("processing");
     setErrorMessage("");
-    setProcessingStep(1);
+    
+    // Only reset to step 1 if we are starting fresh (not a recursive bypass call)
+    if (!transcript) {
+      setProcessingStep(1);
+    }
 
     try {
-      setProcessingStep(1);
-      await new Promise((r) => setTimeout(r, 400));
-      setProcessingStep(2);
+      if (!transcript) {
+        await new Promise((r) => setTimeout(r, 400));
+        setProcessingStep(2);
+      }
 
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 min timeout
