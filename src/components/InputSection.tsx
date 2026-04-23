@@ -355,7 +355,7 @@ export default function InputSection({ onGenerate, errorMessage, isError }: Inpu
   // Proactive warm-up for Render backend
   useEffect(() => {
     const videoId = url.match(/(?:v=|\/)([0-9A-Za-z_-]{11}).*/)?.[1];
-    const pythonUrl = process.env.NEXT_PUBLIC_PYTHON_BACKEND_URL;
+    const pythonUrl = process.env.NEXT_PUBLIC_PYTHON_BACKEND_URL || "https://ai-content-repurposer-production-1b9a.up.railway.app";
     
     if (videoId && pythonUrl) {
       // Ping the root or a health check to wake up Render early

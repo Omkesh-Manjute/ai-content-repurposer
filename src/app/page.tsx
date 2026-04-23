@@ -78,7 +78,7 @@ export default function HomePage() {
 
       if (!response.ok) {
         if (data.isBlockError) {
-          const pythonUrl = process.env.NEXT_PUBLIC_PYTHON_BACKEND_URL;
+          const pythonUrl = process.env.NEXT_PUBLIC_PYTHON_BACKEND_URL || "https://ai-content-repurposer-production-1b9a.up.railway.app";
           const videoId = url.match(/(?:v=|\/)([0-9A-Za-z_-]{11}).*/)?.[1];
           
           if (pythonUrl && videoId) {

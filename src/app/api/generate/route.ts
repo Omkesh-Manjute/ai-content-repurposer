@@ -63,7 +63,7 @@ function parseAIResponse(raw: string) {
 }
 
 async function tryFetchTranscript(vId: string): Promise<TranscriptItem[] | null> {
-  const pythonBackendUrl = process.env.PYTHON_BACKEND_URL;
+  const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || "https://ai-content-repurposer-production-1b9a.up.railway.app";
   
   if (pythonBackendUrl) {
     // Try up to 2 times to handle Render cold starts
