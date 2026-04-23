@@ -63,24 +63,31 @@ function parseAIResponse(raw: string) {
 }
 
 async function tryFetchTranscript(vId: string): Promise<TranscriptItem[] | null> {
-  // NEW: Try Python Backend on Render first
   const pythonBackendUrl = process.env.PYTHON_BACKEND_URL;
+  
   if (pythonBackendUrl) {
-    try {
-      console.log(`Using Python backend at ${pythonBackendUrl}`);
-      const res = await fetch(`${pythonBackendUrl.replace(/\/$/, "")}/transcript/${vId}`, {
-        signal: AbortSignal.timeout(15000)
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.transcript) return data.transcript;
+    // Try up to 2 times to handle Render cold starts
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        console.log(`Attempt ${attempt}: Fetching from Python backend...`);
+        const res = await fetch(`${pythonBackendUrl.replace(/\/$/, "")}/transcript/${vId}`, {
+          // Longer timeout for the first attempt to allow Render to wake up
+          signal: AbortSignal.timeout(attempt === 1 ? 50000 : 15000)
+        });
+        
+        if (res.ok) {
+          const data = await res.json();
+          if (data.transcript) return data.transcript;
+        }
+      } catch (e) {
+        console.error(`Attempt ${attempt} failed:`, e);
+        // Wait a bit before second attempt if first one timed out
+        if (attempt === 1) await new Promise(r => setTimeout(r, 2000));
       }
-    } catch (e) {
-      console.error("Python backend failed:", e);
     }
   }
 
-  // Fallback to existing Node strategies if Python fails or isn't set
+  // Fallback to existing Node strategies
   const extractFromPlayerResponse = (data: any) => {
     const tracks = data.captions?.playerCaptionsTracklistRenderer?.captionTracks;
     if (tracks?.length) return tracks.find((t: any) => t.languageCode === "en") || tracks[0];
