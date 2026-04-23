@@ -63,7 +63,24 @@ function parseAIResponse(raw: string) {
 }
 
 async function tryFetchTranscript(vId: string): Promise<TranscriptItem[] | null> {
-  // Helpers for extraction
+  // NEW: Try Python Backend on Render first
+  const pythonBackendUrl = process.env.PYTHON_BACKEND_URL;
+  if (pythonBackendUrl) {
+    try {
+      console.log(`Using Python backend at ${pythonBackendUrl}`);
+      const res = await fetch(`${pythonBackendUrl.replace(/\/$/, "")}/transcript/${vId}`, {
+        signal: AbortSignal.timeout(15000)
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.transcript) return data.transcript;
+      }
+    } catch (e) {
+      console.error("Python backend failed:", e);
+    }
+  }
+
+  // Fallback to existing Node strategies if Python fails or isn't set
   const extractFromPlayerResponse = (data: any) => {
     const tracks = data.captions?.playerCaptionsTracklistRenderer?.captionTracks;
     if (tracks?.length) return tracks.find((t: any) => t.languageCode === "en") || tracks[0];
@@ -79,8 +96,8 @@ async function tryFetchTranscript(vId: string): Promise<TranscriptItem[] | null>
     }));
   };
 
-  // Strategy 1: Piped API (Very robust community proxy)
-  const pipedInstances = ["https://pipedapi.kavin.rocks", "https://pipedapi.tokhmi.xyz", "https://api.piped.victr.me"];
+  // Strategy 1: Piped API
+  const pipedInstances = ["https://pipedapi.kavin.rocks", "https://pipedapi.tokhmi.xyz"];
   for (const api of pipedInstances) {
     try {
       const res = await fetch(`${api}/streams/${vId}`, { signal: AbortSignal.timeout(5000) });
@@ -94,55 +111,6 @@ async function tryFetchTranscript(vId: string): Promise<TranscriptItem[] | null>
           offset: 0
         })).filter(i => i.text.length > 0);
       }
-    } catch (e) {}
-  }
-
-  // Strategy 2: Innertube MWEB
-  try {
-    const res = await fetch("https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2Sl_Y6G397J8u5kY37rJ3S5c6G8", {
-      method: "POST",
-      body: JSON.stringify({
-        videoId: vId,
-        context: { client: { clientName: "MWEB", clientVersion: "2.20230405.08.01", hl: "en" } }
-      }),
-      headers: { "Content-Type": "application/json" }
-    });
-    const track = extractFromPlayerResponse(await res.json());
-    if (track) return await fetchCaptionData(track.baseUrl);
-  } catch (e) {}
-
-  // Strategy 3: Innertube Android (Direct)
-  try {
-    const res = await fetch("https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2Sl_Y6G397J8u5kY37rJ3S5c6G8", {
-      method: "POST",
-      body: JSON.stringify({
-        videoId: vId,
-        context: { client: { clientName: "ANDROID", clientVersion: "17.31.35", hl: "en" } }
-      }),
-      headers: { "Content-Type": "application/json" }
-    });
-    const track = extractFromPlayerResponse(await res.json());
-    if (track) return await fetchCaptionData(track.baseUrl);
-  } catch (e) {}
-
-  // Strategy 4: CORS Proxy Rotator
-  const proxies = [
-    `https://api.allorigins.win/raw?url=`,
-    `https://api.codetabs.com/v1/proxy?quest=`,
-  ];
-  for (const proxy of proxies) {
-    try {
-      const targetUrl = encodeURIComponent(`https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2Sl_Y6G397J8u5kY37rJ3S5c6G8`);
-      const res = await fetch(`${proxy}${targetUrl}`, {
-        method: "POST",
-        body: JSON.stringify({
-          videoId: vId,
-          context: { client: { clientName: "ANDROID", clientVersion: "17.31.35", hl: "en" } }
-        }),
-        headers: { "Content-Type": "application/json" }
-      });
-      const track = extractFromPlayerResponse(await res.json());
-      if (track) return await fetchCaptionData(track.baseUrl);
     } catch (e) {}
   }
 
