@@ -38,7 +38,7 @@ export default function HomePage() {
   const [appState, setAppState] = useState<AppState>("idle");
   const [content, setContent] = useState<GeneratedContent | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
-  const [processingStep, setProcessingStep] = useState(0);
+  const [processingStep, setProcessingStep] = useState(0); // 0: Idle, 1: Initializing, 2: Extracting, 3: Waking up Secondary, 4: AI Processing
   // Login modal states
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [loginUserId, setLoginUserId] = useState("");
@@ -73,28 +73,31 @@ export default function HomePage() {
 
       if (!response.ok) {
         if (data.isBlockError) {
-          // Client-side bypass: Try Render directly from browser (No Vercel 10s limit)
           const pythonUrl = process.env.NEXT_PUBLIC_PYTHON_BACKEND_URL;
           const videoId = url.match(/(?:v=|\/)([0-9A-Za-z_-]{11}).*/)?.[1];
           
           if (pythonUrl && videoId) {
-            setProcessingStep(2); // "Extracting Transcript"
+            setProcessingStep(3); // "Waking up Secondary Server"
             try {
+              // We don't use timeout here because Render can take up to 60s
               const directRes = await fetch(`${pythonUrl.replace(/\/$/, "")}/transcript/${videoId}`);
               if (directRes.ok) {
                 const directData = await directRes.json();
                 if (directData.transcript) {
-                  // Retry generate with the transcript we just got
+                  setProcessingStep(4); // "AI Processing"
                   return handleGenerate(url, apiKey, provider, model, tone, directData.transcript.map((t: any) => t.text).join(" "));
                 }
               }
             } catch (e) {
-              console.error("Direct bypass failed:", e);
+              console.error("Secondary server failed:", e);
+              throw new Error("Secondary server is also blocked or sleeping. Please try again in 1 minute.");
             }
           }
         }
-        throw new Error(data.error || "Something went wrong. Please try again.");
+        throw new Error(data.error || "Something went wrong.");
       }
+
+      setProcessingStep(4); // AI Processing
 
       setProcessingStep(4);
       await new Promise((r) => setTimeout(r, 300));

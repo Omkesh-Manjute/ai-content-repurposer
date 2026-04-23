@@ -18,14 +18,19 @@ const STEPS = [
     description: "Fetching subtitles and speech-to-text data...",
   },
   {
+    icon: "🚀",
+    title: "Activating Secondary Server",
+    description: "YouTube blocked primary server. Waking up bypass engine...",
+  },
+  {
     icon: "🤖",
-    title: "AI Processing with Gemini",
-    description: "Analyzing key points, summarizing content...",
+    title: "AI Content Generation",
+    description: "Analyzing transcript and generating insights...",
   },
   {
     icon: "✅",
-    title: "Generating Output",
-    description: "Formatting notes, captions, and reel script...",
+    title: "Finalizing Output",
+    description: "Formatting notes, captions, and scripts...",
   },
 ];
 
