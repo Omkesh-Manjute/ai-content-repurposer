@@ -99,6 +99,7 @@ export default function HomePage() {
       
       clearTimeout(timeoutId);
       const data = await response.json();
+      console.log("API RESPONSE (AI):", data);
 
       if (!response.ok) {
         throw new Error(data?.error || "AI generation failed");

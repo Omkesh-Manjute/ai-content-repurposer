@@ -563,6 +563,7 @@ function OutputWithShelf({ content, onReset }: OutputSectionProps) {
 }
 
 export default function OutputSection({ content, onReset }: OutputSectionProps) {
+  if (!content) return null;
   return (
     <div className="fade-in-up">
       {/* Success banner */}

@@ -43,9 +43,10 @@ export const generateContent = async (url) => {
     }
 
     const data = await response.json();
+    console.log("API RESPONSE (Railway):", data);
     
     if (!data || !data.transcript) {
-      throw new Error("Transcript not available");
+      throw new Error("Transcript not available for this video");
     }
 
     return data;
