@@ -127,17 +127,23 @@ async function tryFetchTranscript(vId: string): Promise<TranscriptItem[] | null>
 
 export async function POST(req: NextRequest) {
   try {
-    const { url, apiKey, model = "meta-llama/llama-3.3-70b-instruct:free", tone = "Hinglish" } = await req.json();
+    const { url, apiKey, model = "meta-llama/llama-3.3-70b-instruct:free", tone = "Hinglish", transcript } = await req.json();
     const videoId = extractVideoId(url?.trim());
 
-    if (!videoId) return NextResponse.json({ error: "Invalid YouTube URL" }, { status: 400 });
+    if (!videoId && !transcript) return NextResponse.json({ error: "Invalid YouTube URL" }, { status: 400 });
     
-    const items = await tryFetchTranscript(videoId);
-    if (!items?.length) {
-      return NextResponse.json({ error: "YouTube is temporarily blocking this request. Please try again in a few minutes or try a different video." }, { status: 422 });
+    let fullTranscript = transcript;
+    
+    if (!fullTranscript) {
+      const items = await tryFetchTranscript(videoId);
+      if (!items?.length) {
+        return NextResponse.json({ 
+          error: "YouTube is blocking our server. Trying secondary extraction...", 
+          isBlockError: true 
+        }, { status: 422 });
+      }
+      fullTranscript = items.map((i: TranscriptItem) => i.text).join(" ").replace(/\s+/g, " ");
     }
-
-    const fullTranscript = items.map((i: TranscriptItem) => i.text).join(" ").replace(/\s+/g, " ");
     
     // OpenRouter Only
     const prompt = `You are an AI Content Repurposer. Convert this transcript into structured Hinglish content (Summary, Notes, 3 Reels Scripts, 10 Hooks, 5 Titles, 3 Captions, Tags). 

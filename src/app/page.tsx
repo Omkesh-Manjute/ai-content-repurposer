@@ -47,7 +47,7 @@ export default function HomePage() {
 
   const outputRef = useRef<HTMLDivElement>(null);
 
-  const handleGenerate = async (url: string, apiKey: string, provider: ProviderId, model: string, tone: string) => {
+  const handleGenerate = async (url: string, apiKey: string, provider: ProviderId, model: string, tone: string, transcript?: string) => {
     setAppState("processing");
     setErrorMessage("");
     setProcessingStep(1);
@@ -63,7 +63,7 @@ export default function HomePage() {
       const response = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url, apiKey, provider, model, tone }),
+        body: JSON.stringify({ url, apiKey, provider, model, tone, transcript }),
         signal: controller.signal
       });
       clearTimeout(timeoutId);
@@ -72,6 +72,27 @@ export default function HomePage() {
       const data = await response.json();
 
       if (!response.ok) {
+        if (data.isBlockError) {
+          // Client-side bypass: Try Render directly from browser (No Vercel 10s limit)
+          const pythonUrl = process.env.NEXT_PUBLIC_PYTHON_BACKEND_URL;
+          const videoId = url.match(/(?:v=|\/)([0-9A-Za-z_-]{11}).*/)?.[1];
+          
+          if (pythonUrl && videoId) {
+            setProcessingStep(2); // "Extracting Transcript"
+            try {
+              const directRes = await fetch(`${pythonUrl.replace(/\/$/, "")}/transcript/${videoId}`);
+              if (directRes.ok) {
+                const directData = await directRes.json();
+                if (directData.transcript) {
+                  // Retry generate with the transcript we just got
+                  return handleGenerate(url, apiKey, provider, model, tone, directData.transcript.map((t: any) => t.text).join(" "));
+                }
+              }
+            } catch (e) {
+              console.error("Direct bypass failed:", e);
+            }
+          }
+        }
         throw new Error(data.error || "Something went wrong. Please try again.");
       }
 
