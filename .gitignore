@@ -1,4 +1,10 @@
-node_modules
+node_modules/
+.next/
+out/
+build/
+cookies.json
+# keep cookies.txt for railway deployment if needed
+# cookies.txt
 
 # Ignore large dependency folders
 ffmpeg-*/
